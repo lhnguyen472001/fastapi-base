@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(**)",
+      "Write(apps/**)",
+      "Write(tests/**)",
+      "Write(alembic/**)",
+      "Write(main.py)",
+      "Shell(uv run *)",
+      "Shell(git *)",
+      "Shell(alembic *)"
+    ],
+    "deny": ["Shell(rm -rf /)", "Shell(git push --force *)", "Write(.env)"]
+  }
+}
