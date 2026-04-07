@@ -1,81 +1,90 @@
 ---
-description: Build structured prompts via step-by-step Q&A workflow. Use when creating high-quality prompts for LLMs.
+description: Build structured prompts via step-by-step Q&A flow. Use when creating high-quality prompts for LLM tasks.
 ---
 
 # Build Structured Prompt Workflow
 
-When user requests building a prompt (e.g., `/build-prompt create booking API`), follow the steps below.
+When the user requests building a prompt (e.g., `/build-prompt create booking API`), follow these steps.
 
 ## General Principles
-- **DO NOT** ask user to type XML tags
-- Ask each step in **natural language**
+
+- **DO NOT** ask the user to type XML tags
+- Ask step by step using **natural language**
 - Each step asks **1 main question**, with suggestions/examples if needed
-- User can answer `skip` to skip optional steps
-- After collecting all information, compile into a complete XML prompt
+- User can answer `skip` to skip non-essential steps
+- After collecting all info, compile into a complete XML-structured prompt
 
 ## Step-by-Step Flow
 
 ### Step 1: Confirm the Goal (Instruction)
-Ask:
-> **What do you need the AI to do?** Briefly describe the task.
-> _Examples: "Write a booking API", "Review this code", "Analyze system architecture"_
 
-Record answer → map to `<instruction/>`
+Ask:
+> **What do you need AI to do?** Describe the task briefly.
+> _Example: "Write a CRUD API for users", "Review this code", "Design the database schema"_
+
+Record answer -> map to `<instruction/>`
 
 ### Step 2: Role
-Ask:
-> **What role should the AI take for this task?**
-> _Examples: "Senior Python Developer", "Tech Lead", "QA Engineer", or `skip` if not needed_
 
-Record → map to `<role/>`
+Ask:
+> **What role should AI take for this task?**
+> _Example: "Senior Python Developer", "Tech Lead", "DevOps Engineer", or `skip` if not needed_
+
+Record -> map to `<role/>`
 
 ### Step 3: Context
-Ask:
-> **Is there any background context the AI needs to know?**
-> _Examples: "Project uses FastAPI + SQLAlchemy 2.x, layered architecture", "This is a microservice for bookings"_
-> _You can `skip` if no special context is needed._
 
-Record → map to `<context/>`
+Ask:
+> **Is there any background context AI should know?**
+> _Example: "Project uses FastAPI + SQLAlchemy 2.x async, layered architecture", "This is a microservice handling auth"_
+> _You can `skip` if no special context._
+
+Record -> map to `<context/>`
 
 ### Step 4: Reference Documents
-Ask:
-> **Are there any documents or files to reference?**
-> _Examples: documentation links, file contents, API specs, database schemas..._
-> _You can paste content directly or specify file paths._
 
-If user specifies file paths → read the files and embed content into `<document/>`
+Ask:
+> **Any documents or files to reference?**
+> _Example: link to docs, file contents, API spec, database schema..._
+> _You can paste content directly or point to a file path._
+
+If user points to a file path -> read file and embed content into `<document/>`
 
 ### Step 5: Examples
-Ask:
-> **Are there any reference examples?** (Sample code, expected output, reference format...)
-> _Note: These are illustrative examples, NOT execution commands._
 
-Record → map to `<example/>`
+Ask:
+> **Any reference examples?** (Sample code, expected output, format reference...)
+> _Note: These are illustrative examples, NOT commands to execute._
+
+Record -> map to `<example/>`
 
 ### Step 6: Input Data
-Ask:
-> **Is there any specific input data or variables?**
-> _Examples: entity names, field lists, sample request/response bodies..._
 
-Record → map to `<input/>`
+Ask:
+> **Any specific input data or variables?**
+> _Example: entity names, field lists, sample request/response bodies..._
+
+Record -> map to `<input/>`
 
 ### Step 7: Constraints
-Ask:
-> **Are there any special constraints or requirements?**
-> _Examples: "Use English only", "No external libraries", "Limit to 500 lines", "Follow team coding conventions"_
 
-Record → map to `<constraint/>`
+Ask:
+> **Any constraints or special requirements?**
+> _Example: "Follow PEP 8", "No external libraries", "Max 500 lines", "Follow team coding conventions"_
+
+Record -> map to `<constraint/>`
 
 ### Step 8: Output Format
+
 Ask:
 > **What format should the result be in?**
-> _Examples: "Complete Python code", "Markdown document", "JSON response", "Bullet-point analysis"_
+> _Example: "Complete Python code", "Markdown document", "JSON response", "Analysis bullet points"_
 
-Record → map to `<output/>`
+Record -> map to `<output/>`
 
 ## Final Step: Compile & Confirm
 
-After collecting all information, compile into a structured XML prompt:
+After collecting all info, compile into structured XML prompt:
 
 ```xml
 <role>[Content from step 2]</role>
@@ -96,15 +105,16 @@ After collecting all information, compile into a structured XML prompt:
 ```
 
 **Notes when compiling:**
-- Skip tags the user chose to `skip`
+
+- Skip tags the user skipped
 - Keep user-provided content as-is — DO NOT alter meaning
 - Reformat for clarity if needed
 
 Display the complete prompt and ask:
-> **Here is the complete prompt. Would you like to:**
+> **Here is your complete prompt. Would you like to:**
 > 1. Use it as-is
-> 2. Edit a specific section
+> 2. Edit a specific part
 > 3. Start over
 
-If user chooses to edit → allow editing individual sections and recompile.
-If user chooses to use → execute the prompt.
+If user chooses to edit -> allow editing individual parts and recompile.
+If user chooses to use -> execute the prompt.

@@ -1,6 +1,7 @@
 import functools
+from pathlib import Path
 
-from pydantic import BaseModel, Field, SecretStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine.url import URL
 
@@ -13,7 +14,9 @@ class DatabaseSettings(BaseModel):
     host: str = Field(default="localhost", description="Database host")
     port: int = Field(default=5432, description="Database port")
     user: str = Field(default="postgres", description="Database user")
-    password: SecretStr = Field(default=SecretStr("postgres"), description="Database password")
+    password: SecretStr = Field(
+        default=SecretStr("postgres"), description="Database password"
+    )
     database: str = Field(default="fastapi_base", description="Database name")
 
     pool_size: int = Field(default=10, description="Pool size")
@@ -23,12 +26,17 @@ class DatabaseSettings(BaseModel):
     pool_pre_ping: bool = Field(default=True, description="Pool pre ping")
 
     driver: str = Field(default="asyncpg", description="Database driver")
+    database_uri: URL = Field(default=None, description="Computed database URI")  # type: ignore[assignment]
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @model_validator(mode="after")
     def build_database_uri(self) -> "DatabaseSettings":
-        """Validate the database URL."""
+        """Build the database URL from connection settings."""
         self.database_uri = URL.create(
-            drivername=self.driver,
+            drivername=f"postgresql+{self.driver}"
+            if "+" not in self.driver
+            else self.driver,
             username=self.user,
             password=self.password.get_secret_value(),
             host=self.host,
@@ -36,6 +44,59 @@ class DatabaseSettings(BaseModel):
             database=self.database,
         )
         return self
+
+
+class AuthSettings(BaseModel):
+    """Authentication and authorization settings."""
+
+    # JWT (RS256 — public/private key files)
+    jwt_algorithm: str = Field(default="RS256", description="JWT signing algorithm")
+    jwt_private_key_path: Path = Field(
+        default=Path("./keys/jwt_private.pem"),
+        description="Path to RSA private key (PEM)",
+    )
+    jwt_public_key_path: Path = Field(
+        default=Path("./keys/jwt_public.pem"),
+        description="Path to RSA public key (PEM)",
+    )
+    access_token_expire_minutes: int = Field(default=15, ge=1)
+    refresh_token_expire_days: int = Field(default=30, ge=1)
+    challenge_token_expire_minutes: int = Field(
+        default=5, ge=1, description="Lifetime of the 2FA challenge JWT"
+    )
+
+    # OTP (email verification)
+    otp_length: int = Field(default=6, ge=4, le=10)
+    otp_expire_minutes: int = Field(default=10, ge=1)
+    otp_max_attempts: int = Field(default=5, ge=1)
+
+    # TOTP (2FA)
+    totp_issuer: str = Field(default="FastAPI Base", description="Issuer name shown in authenticator apps")
+
+    # Google OAuth2
+    google_client_id: str = Field(default="")
+    google_client_secret: SecretStr = Field(default=SecretStr(""))
+    google_redirect_uri: str = Field(
+        default="http://localhost:8000/api/v1/auth/oauth/google/callback"
+    )
+
+
+class EmailSettings(BaseModel):
+    """Email sender settings (SMTP + Jinja templates)."""
+
+    sender_address: str = Field(default="no-reply@fastapi-base.local")
+    sender_name: str = Field(default="FastAPI Base")
+
+    # SMTP — defaults point at the MailHog container in compose.yml.
+    smtp_host: str = Field(default="localhost")
+    smtp_port: int = Field(default=1025)
+    smtp_use_tls: bool = Field(default=False)
+    smtp_username: SecretStr = Field(default=SecretStr(""))
+    smtp_password: SecretStr = Field(default=SecretStr(""))
+    smtp_timeout_seconds: int = Field(default=5, ge=1)
+
+    # Jinja template directory.
+    template_dir: Path = Field(default=Path("apps/core/email/templates"))
 
 
 class ApplicationSettings(BaseSettings):
@@ -52,8 +113,13 @@ class ApplicationSettings(BaseSettings):
     port: int = Field(default=8000, description="Port")
     reload: bool = Field(default=False, description="Reload")
     workers: int = Field(default=1, description="Workers")
+    app_name: str = Field(default="FastAPI Base", description="Application display name")
 
-    db: DatabaseSettings = Field(default_factory=DatabaseSettings, description="Database settings")
+    db: DatabaseSettings = Field(
+        default_factory=DatabaseSettings, description="Database settings"
+    )
+    auth: AuthSettings = Field(default_factory=AuthSettings, description="Auth settings")
+    email: EmailSettings = Field(default_factory=EmailSettings, description="Email settings")
 
 
 @functools.lru_cache()

@@ -1,38 +1,57 @@
+---
+description: Decorator and middleware patterns for FastAPI Base — Python equivalents of AOP for cross-cutting concerns. Apply to ALL tasks involving decorators or middleware.
+---
+
 # Decorators & Middleware (Cross-Cutting Concerns)
 
-Use Python decorators and FastAPI middleware to separate cross-cutting concerns:
-Logging, Performance, Audit, Request Context.
+Use decorators and middleware to separate cross-cutting concerns: Logging, Transactions, Performance, Auth.
 
-## Decorator Pattern (Python equivalent of Java AOP)
+## @Transactional Decorator Pattern
+
+```python
+from apps.core.database.sql.transactional import Transactional
+
+class OrderService(SQLAlchemyService[Order]):
+    @Transactional()
+    async def create_order(self, session, *, data):
+        # Transaction handled by decorator — auto-commit on success, rollback on error
+        order = await self.repository.add(session, data=data)
+        await self.inventory_service.reserve(session, order_id=order.id)
+        return order
+```
+
+## Performance Tracking Decorator
 
 ```python
 import functools
 import time
-import logging
+from loguru import logger
 
-logger = logging.getLogger(__name__)
-
-def track_action(action: str = ""):
-    """Decorator for automatic logging and performance tracking."""
+def track_action(action_name: str = ""):
+    """Decorator that logs method entry/exit with timing."""
     def decorator(func):
         @functools.wraps(func)
         async def wrapper(*args, **kwargs):
-            method_name = func.__qualname__
-            logger.info("%s - %s - START - args: %s", method_name, action, kwargs)
-
+            method = f"{func.__qualname__}"
+            logger.info(f"TrackAction - {method} - START - {action_name}")
             start = time.perf_counter()
-            result = await func(*args, **kwargs)
-            elapsed = (time.perf_counter() - start) * 1000
-
-            logger.info("%s - %s - END - elapsed: %.2fms", method_name, action, elapsed)
-            return result
+            try:
+                result = await func(*args, **kwargs)
+                elapsed = (time.perf_counter() - start) * 1000
+                logger.info(f"TrackAction - {method} - END - elapsed: {elapsed:.2f}ms")
+                return result
+            except Exception as e:
+                elapsed = (time.perf_counter() - start) * 1000
+                logger.error(f"TrackAction - {method} - ERROR after {elapsed:.2f}ms: {e}")
+                raise
         return wrapper
     return decorator
 
-# Usage — clean service, no manual logging
+# Usage
 class OrderService:
     @track_action("Create Order")
-    async def create_order(self, session: AsyncSession, *, data: CreateOrderRequest) -> OrderResponse:
+    @Transactional()
+    async def create_order(self, session, *, data):
         # Pure business logic — logging handled by decorator
         ...
 ```
@@ -40,56 +59,63 @@ class OrderService:
 ## FastAPI Middleware
 
 ```python
-# Session context middleware (already implemented)
+from starlette.middleware.base import BaseHTTPMiddleware
+
+# SQLAlchemy session middleware (already implemented)
+# Sets session context per request, auto-cleanup on response
 class SQLAlchemySessionMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        session_id = id(asyncio.current_task())
-        set_session_ctx(session_id)
+    async def dispatch(self, request, call_next):
+        set_session_ctx(session_id=id(asyncio.current_task()))
         try:
-            response = await call_next(request)
+            return await call_next(request)
         finally:
             await scoped_session.remove()
             reset_session_ctx()
-        return response
 ```
 
-## FastAPI Dependencies as Cross-Cutting Concerns
+## FastAPI Dependencies as Middleware
 
 ```python
-# Auth dependency
+from dependency_injector.wiring import Provide, inject
+from fastapi import Depends, Security
+
+# Use Depends() for request-scoped cross-cutting concerns
 async def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    token: str = Security(oauth2_scheme),
     session: AsyncSession = Depends(session_factory),
 ) -> User:
     payload = decode_jwt(token)
-    user = await user_repo.find_by_id(session, user_id=payload["sub"])
+    user = await user_service.get_by_id(session, item_id=payload["sub"])
     if user is None:
-        raise HTTPException(status_code=401)
+        raise AuthenticationError(message="Invalid token")
     return user
 
-# Use as dependency in routes
+# Apply to routes — always use @inject with DI container
 @router.get("/me")
-async def get_profile(current_user: User = Depends(get_current_user)):
+@inject
+async def get_profile(
+    current_user: User = Depends(get_current_user),
+    user_service: UserService = Depends(Provide[UserContainer.user_service]),
+):
     ...
 ```
 
-## Exception Handlers (Global)
+## When to Use Each Pattern
 
-```python
-# Registered in app startup
-@app.exception_handler(BackendError)
-async def backend_error_handler(request: Request, exc: BackendError):
-    return JSONResponse(
-        status_code=exc.status_code,
-        content=exc.to_dict(),
-    )
-```
+| Pattern | Use For | Example |
+|---|---|---|
+| `@inject` + `Provide[]` | DI container resolution in routes | `Depends(Provide[UserContainer.user_service])` |
+| Decorator | Method-level concerns (logging, timing, caching) | `@track_action`, `@Transactional` |
+| Middleware | Request-level concerns (session, CORS, auth) | `SQLAlchemySessionMiddleware` |
+| `Depends()` | Route-level DI (auth, pagination, filters) | `get_current_user`, `session_factory` |
+| Exception Handler | Global error handling | `backend_exception_handler` |
 
-## When to Use Decorators
+## Rules
 
-- Performance tracking / method timing
-- Audit logging (who did what, when)
-- Input/output logging for debugging
-- Retry logic for external service calls
-- Cache results (`functools.lru_cache` for sync, custom for async)
-- NEVER for core business logic
+- ALWAYS use `@inject` on route functions that use `Depends(Provide[...])`
+- `@inject` goes AFTER `@router.get/post/...` (decorator order matters)
+- Decorators for method-level cross-cutting (timing, audit, retry)
+- Middleware for request/response lifecycle (sessions, logging, CORS)
+- `Depends()` for route-specific DI and validation
+- NEVER put business logic in decorators or middleware
+- Stack decorators from outermost to innermost (top = outermost)

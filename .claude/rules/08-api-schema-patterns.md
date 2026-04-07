@@ -1,105 +1,144 @@
-# API, Schema Patterns & Migrations
+---
+description: API and Pydantic schema patterns for FastAPI Base — request/response schemas, pagination, versioning. Apply to ALL API tasks.
+---
+
+# API & Schema Patterns
 
 ## API Path Conventions
 
 | Context | Path Prefix | Auth Required |
 |---|---|---|
 | Public | `/api/v1/public/**` | No |
-| Authenticated | `/api/v1/**` | Yes (JWT Bearer) |
-| Admin | `/api/v1/admin/**` | Yes (admin role) |
+| Authenticated | `/api/v1/**` | Bearer JWT |
+| Admin | `/api/v1/admin/**` | Bearer JWT + admin role |
 
-## Router Patterns
+## Schema Layering (Pydantic v2)
 
-```python
-# Module router
-router = APIRouter(prefix="/users", tags=["users"])
-
-# All endpoints return APIResponse wrapper
-@router.post("", response_model=APIResponse[UserResponse], status_code=201)
-@inject
-async def create_user(
-    data: CreateUserRequest,
-    session: AsyncSession = Depends(session_factory),
-    service: UserService = Depends(Provide[UserContainer.user_service]),
-) -> APIResponse[UserResponse]:
-    ...
-
-# Include in main app
-app.include_router(router, prefix="/api/v1")
+```
+Request Schema (with validation)          → apps/{module}/schemas.py
+     ↓ (validated by FastAPI)
+Service Layer (business logic)            → apps/{module}/services.py
+     ↓ (SQLAlchemy model)
+ORM Model                                 → apps/{module}/models.py
+     ↓ (to_dict or from_attributes)
+Response Schema (serialization)           → apps/{module}/schemas.py
 ```
 
-## Schema Patterns (Pydantic v2)
-
-### Request Schemas — WITH validation
+## Request Schemas — With Validation
 
 ```python
-class CreateUserRequest(RequestObjectSchema):
-    email: EmailStr = Field(..., description="User email address")
-    username: str = Field(..., min_length=3, max_length=150, description="Username")
-    password: str = Field(..., min_length=8, max_length=128, description="Password")
+from pydantic import Field, field_validator
+from apps.core.schemas.base import BaseObjectSchema
 
-class UpdateUserRequest(RequestObjectSchema):
-    email: EmailStr | None = Field(default=None)
-    username: str | None = Field(default=None, min_length=3, max_length=150)
-    # Use exclude_unset=True when converting: data.model_dump(exclude_unset=True)
+class CreateUserRequest(BaseObjectSchema):
+    """Request schema for creating a user."""
+
+    username: str = Field(..., min_length=3, max_length=50)
+    email: str = Field(..., pattern=r"^[\w\.-]+@[\w\.-]+\.\w+$")
+    password: str = Field(..., min_length=8)
+
+    @field_validator("username")
+    @classmethod
+    def username_alphanumeric(cls, v: str) -> str:
+        if not v.isalnum():
+            raise ValueError("Username must be alphanumeric")
+        return v.lower()
 ```
 
-### Response Schemas — FROM ORM via model_validate
+## Response Schemas — Serialization Only
 
 ```python
+import uuid
+from datetime import datetime
+from apps.core.schemas.response import ResponseObjectSchema
+
 class UserResponse(ResponseObjectSchema):
+    """Response schema for user data."""
+
     id: uuid.UUID
-    email: str
     username: str
+    email: str
     is_active: bool
-    created_at: datetime.datetime
-    updated_at: datetime.datetime
-
-# Convert ORM → response (from_attributes=True in ResponseObjectSchema)
-UserResponse.model_validate(user_orm_instance)
+    created_at: datetime
+    # NEVER include: hashed_password, internal fields
 ```
 
-### Pagination
+## Standard API Response Wrapper
 
 ```python
-# Request: extend OffsetPaginationRequestSchema
-class ListUsersRequest(OffsetPaginationRequestSchema):
-    is_active: bool | None = Field(default=None, description="Filter by active status")
+from dependency_injector.wiring import Provide, inject
+from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
-# Response: use PaginatedResponse[T]
-PaginatedResponse[UserResponse](items=[...], total=100, limit=20, offset=0)
+from apps.core.database.sql.session import session_factory
+from apps.core.schemas.response import APIResponse, JsonResponseStatuses, PaginatedResponse, ResponseCodes
+from apps.user.containers import UserContainer
+from apps.user.schemas import UserResponse
+from apps.user.services import UserService
+
+# Single object response — @inject + Depends(Provide[...])
+@router.get("/{user_id}", response_model=APIResponse[UserResponse])
+@inject
+async def get_user(
+    user_id: uuid.UUID,
+    session: AsyncSession = Depends(session_factory),
+    user_service: UserService = Depends(Provide[UserContainer.user_service]),
+) -> APIResponse[UserResponse]:
+    user = await user_service.get_by_id(session, item_id=user_id)
+    return APIResponse[UserResponse](
+        code=ResponseCodes.API000,
+        data=user,
+        status=JsonResponseStatuses.SUCCESS,
+        message="User retrieved successfully.",
+    )
+
+# Paginated list response
+@router.get("", response_model=APIResponse[PaginatedResponse[UserResponse]])
+@inject
+async def list_users(
+    params: ListUsersRequest = Depends(),
+    session: AsyncSession = Depends(session_factory),
+    user_service: UserService = Depends(Provide[UserContainer.user_service]),
+) -> APIResponse[PaginatedResponse[UserResponse]]:
+    result = await user_service.list_items(session, filters=params)
+    return APIResponse[PaginatedResponse[UserResponse]](
+        code=ResponseCodes.API000,
+        data=result,
+        status=JsonResponseStatuses.SUCCESS,
+        message="Users retrieved successfully.",
+    )
 ```
 
-### API Response Wrapper
+## Pagination — Query Parameters
 
 ```python
-# ALL endpoints return this structure
-APIResponse[UserResponse](
-    code=ResponseCodes.API000,       # Business code
-    data=user_response,              # Typed payload
-    status=JsonResponseStatuses.SUCCESS,
-    message="User created successfully.",
-)
+from dependency_injector.wiring import Provide, inject
+from apps.core.schemas.request import OffsetPaginationRequestSchema, OrderByRequestSchema
+
+@router.get("")
+@inject
+async def list_users(
+    pagination: OffsetPaginationRequestSchema = Depends(),
+    ordering: OrderByRequestSchema = Depends(),
+    session: AsyncSession = Depends(session_factory),
+    user_service: UserService = Depends(Provide[UserContainer.user_service]),
+):
+    ...
 ```
 
 ## Schema Rules
 
-- Request schemas: `{Action}{Entity}Request` — WITH Field validation
-- Response schemas: `{Entity}Response` — with `from_attributes=True`
-- NEVER expose `hashed_password` or sensitive fields in response schemas
-- Use `model_dump(exclude_unset=True)` for partial updates
-- NEVER return ORM model instances from routes — always Pydantic schemas
+- Request schemas: include validation (`Field`, `field_validator`)
+- Response schemas: NO validation — serialization only
+- NEVER expose internal fields (passwords, internal IDs) in response schemas
+- Use `model_validate(obj, from_attributes=True)` to convert ORM models to schemas
+- NEVER return ORM models directly from API endpoints
+- Use `ConfigDict(from_attributes=True)` on all schemas (inherited from `BaseObjectSchema`)
 
 ## Alembic Migrations
 
 - **Location:** `alembic/versions/`
-- **Naming:** Auto-generated with descriptive message
-- **Commands:**
-  ```bash
-  uv run alembic revision --autogenerate -m "add_user_table"
-  uv run alembic upgrade head
-  uv run alembic downgrade -1
-  ```
-- NEVER modify a migration that has been applied to shared environments
-- ALWAYS include both upgrade and downgrade functions
-- Review auto-generated migrations before applying — verify column types, indexes, constraints
+- Run: `uv run alembic revision --autogenerate -m "description"`
+- Apply: `uv run alembic upgrade head`
+- NEVER edit migration files after they have been applied
+- Include both `upgrade()` and `downgrade()` in every migration

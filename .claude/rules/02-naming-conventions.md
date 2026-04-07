@@ -1,3 +1,7 @@
+---
+description: Naming conventions for FastAPI Base — PEP 8, component naming, anti-patterns. Apply to ALL coding tasks.
+---
+
 # Naming Conventions
 
 ## Component Naming
@@ -5,37 +9,56 @@
 | Component | Pattern | Example |
 |---|---|---|
 | Router module | `routes.py` | `apps/user/routes.py` |
+| Router variable | `router` | `router = APIRouter(...)` |
 | Service class | `{Entity}Service` | `UserService` |
-| Repository Protocol | `{Entity}RepositoryProtocol` | `UserRepositoryProtocol` |
 | Repository class | `{Entity}Repository` | `UserRepository` |
 | ORM Model | `{Entity}` (singular) | `User` |
-| Request Schema | `{Action}{Entity}Request` | `CreateUserRequest` |
-| Response Schema | `{Entity}Response` | `UserResponse` |
-| List Request Schema | `List{Entity}sRequest` | `ListUsersRequest` |
+| Table name | `{entity}s` (plural, auto) | `users` (via `CommonTableAttributes`) |
+| Request schema | `{Action}{Entity}Request` | `CreateUserRequest` |
+| Response schema | `{Entity}Response` | `UserResponse` |
+| Exception class | `{Entity}{Error}Exception` | `UserNotFoundException` |
+| Error codes enum | `{Entity}ErrorCodes` | `UserErrorCodes` |
 | DI Container | `{Entity}Container` | `UserContainer` |
-| Exception | `{Entity}{Error}Error` | `UserNotFoundError` |
-| Error Codes Enum | `{Entity}ErrorCodes` | `UserErrorCodes` |
-| Router instance | `router` | `router = APIRouter(...)` |
+| Filter class | `{Description}Filter` | `SearchFilter`, `LimitOffsetFilter` |
+| Mixin class | `{Feature}Mixin` | `HasTimestampMixin` |
 
 ## Python Naming Rules (PEP 8)
 
 | Element | Convention | Good | Bad |
 |---|---|---|---|
-| Class | PascalCase, noun | `OrderService` | `doOrder` |
-| Function/Method | snake_case, verb | `calculate_price()` | `price()` |
+| Class | PascalCase | `OrderService` | `order_service` |
+| Function/Method | snake_case | `calculate_price()` | `calculatePrice()` |
 | Variable | snake_case | `user_count` | `userCount` |
 | Constant | UPPER_SNAKE_CASE | `MAX_RETRY_LIMIT` | `maxRetry` |
 | Module | snake_case | `user_service.py` | `UserService.py` |
-| Package | snake_case, no hyphens | `background_tasks` | `background-tasks` |
-| Boolean | `is_`, `has_`, `can_`, `should_` | `is_expired` | `expired` |
-| Private | Leading underscore | `_hash_password()` | `hashPassword()` |
-| Type alias | PascalCase | `SQLAlchemyModelT` | `sqlalchemy_model_t` |
-| Enum | PascalCase class, UPPER values | `OrderStatus.PENDING` | `OrderStatuses` |
+| Package | lowercase | `apps/user/` | `apps/User/` |
+| Private | `_` prefix | `_internal_method()` | `internalMethod()` |
+| Boolean | `is_`, `has_`, `can_`, `should_` | `is_active` | `active` |
+| Async function | `async def` prefix implicit | `async def get_user()` | `def get_user_async()` |
+| Type alias | PascalCase with `T` suffix | `SQLAlchemyModelT` | `sql_model_type` |
+| Protocol | PascalCase | `RepositoryProtocol` | `IRepository` |
+
+## Import Conventions
+
+```python
+# 1. stdlib
+import uuid
+from typing import Any, Sequence
+
+# 2. third-party
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Mapped, mapped_column
+
+# 3. local (always use apps.* prefix)
+from apps.core.database.sql.model.base import UUIDAuditBase
+from apps.core.schemas.response import APIResponse
+from apps.user.models import User
+```
 
 ## Anti-Patterns
 
-- **No redundancy:** `User.user_email` → use `User.email`
-- **No abbreviations:** `usr_svc` → use `user_service`
-- **No camelCase** in Python code — always `snake_case` for functions/variables
-- **No `I` prefix** on protocols: `UserRepositoryProtocol` not `IUserRepository`
-- **ALL code, comments, variables MUST be in English**
+- **No Redundancy:** `User.user_email` -> use `User.email`
+- **No Abbreviations:** `usr_svc` -> use `user_service`
+- **No Hungarian Notation:** `str_name` -> use `name`
+- **No `I` prefix for Protocols:** `IRepository` -> use `RepositoryProtocol`
+- ALL code, comments, variables MUST be in English

@@ -1,5 +1,5 @@
 ---
-description: Review code changes in a git commit against FastAPI Base coding rules. Usage - /review-code commit {hash}
+description: Review code changes in a git commit against FastAPI Base coding rules. Usage — /review-code commit {hash}
 ---
 
 # Review Code — FastAPI Base
@@ -53,20 +53,19 @@ git show {hash} -- {file_path}
 
 Categorize each changed file by its layer/type:
 
-- **Route** (`apps/*/routes.py`)
+- **Router** (`apps/*/routes.py`)
 - **Service** (`apps/*/services.py`)
 - **Repository** (`apps/*/repositories.py`)
-- **Model** (`apps/*/models.py`)
+- **ORM Model** (`apps/*/models.py`)
 - **Schema** (`apps/*/schemas.py`)
-- **Container** (`apps/*/containers.py`)
 - **Exception** (`apps/*/exceptions.py`)
-- **Settings** (`apps/settings.py`)
-- **DB Infrastructure** (`libs/database/**`)
-- **Shared Schema** (`libs/schemas/**`)
-- **Shared Exception** (`libs/exceptions/**`)
-- **Middleware** (`libs/middlewares/**`)
+- **DI Container** (`apps/*/containers.py`)
+- **Core Database** (`apps/core/database/sql/*.py`)
+- **Core Middleware** (`apps/core/middlewares/*.py`)
+- **Core Schema** (`apps/core/schemas/*.py`)
+- **Core Service** (`apps/core/services/*.py`)
 - **Migration** (`alembic/versions/*.py`)
-- **Configuration** (`*.yml`, `*.toml`, `*.cfg`)
+- **Configuration** (`*.toml`, `*.cfg`, `*.ini`, `*.env*`)
 - **Other** (tests, utils, etc.)
 
 ### 5. Review against ALL rule categories
@@ -77,92 +76,89 @@ For EACH changed file, check against the applicable rules below. Only check rule
 
 #### 5.1 — Layered Architecture (01)
 
-- [ ] **Layer dependency direction**: No upward imports (Repository → Route is FORBIDDEN)
-- [ ] **Routes inject Services** via `Depends(Provide[Container.service])`
-- [ ] **Routes return Pydantic schemas** wrapped in `APIResponse`, never ORM models
-- [ ] **Services use Repositories** for DB access, never direct SQLAlchemy queries
-- [ ] **Services return Pydantic response schemas**, not ORM models
-- [ ] **Repositories extend `BaseSQLAlchemyRepository`** and define `model_type`
-- [ ] **Models** are SQLAlchemy declarative with `Mapped` type hints
-- [ ] **Shared code** in `libs/`, module code in `apps/{module}/`
+- [ ] **Layer dependency direction**: No upward imports (Repository -> Router FORBIDDEN)
+- [ ] **Router uses `@inject`** decorator on every route function with DI
+- [ ] **Router injects Service** via `Depends(Provide[{Module}Container.{service}])`, NOT manual instantiation
+- [ ] **Router returns Pydantic schemas**, never ORM models
+- [ ] **DI Container** declares `providers.Factory` for services and repositories
+- [ ] **Service uses Repository** for data access, not raw session queries
+- [ ] **Service does NOT import** Router layer
+- [ ] **Repository** extends `BaseSQLAlchemyRepository`, no business logic
+- [ ] **Model** inherits from project bases (`UUIDAuditBase`, etc.)
+- [ ] **Module structure** follows convention (models, repos, services, routes, schemas, exceptions, containers)
 
 #### 5.2 — Naming Conventions (02)
 
-- [ ] **PEP 8**: Classes `PascalCase`, functions/variables `snake_case`, constants `UPPER_SNAKE_CASE`
-- [ ] **Component naming**: Service, Repository, Schema follow patterns from rule 02
-- [ ] **Methods**: verb + snake_case, meaningful names, no abbreviations
+- [ ] **Classes**: PascalCase
+- [ ] **Functions/methods**: snake_case
+- [ ] **Variables**: snake_case
+- [ ] **Constants**: UPPER_SNAKE_CASE
+- [ ] **Component naming**: follows pattern table (`UserService`, `UserRepository`, etc.)
 - [ ] **Booleans**: prefixed with `is_`, `has_`, `can_`, `should_`
-- [ ] **No redundancy**: e.g., `User.user_email` → should be `User.email`
+- [ ] **No abbreviations**: `usr_svc` -> `user_service`
 - [ ] **ALL code, comments, variables in English** — no Vietnamese
 
 #### 5.3 — Clean Code (03)
 
-- [ ] **Type hints** on ALL parameters and return values
-- [ ] **Constructor injection** — no global mutable state
-- [ ] **Early return pattern**: guard clauses at top, no deep nesting
-- [ ] **Keyword-only arguments** for service/repository methods (after `*`)
-- [ ] **Function length** ≤ 50 lines (target 20–35)
-- [ ] **Function parameters** ≤ 3 (else use schema/dataclass)
-- [ ] **Nesting depth** ≤ 2 levels
-- [ ] **Class length** ≤ 500 lines
+- [ ] **Type hints** on all function parameters and return values
+- [ ] **Modern Python syntax**: `str | None` not `Optional[str]`
+- [ ] **Early return pattern**: no deep nesting, guard clauses at top
+- [ ] **Keyword-only args** for optional parameters (after `*`)
+- [ ] **Function length** <= 50 lines
+- [ ] **Parameters** <= 3 positional
+- [ ] **Nesting depth** <= 2 levels
+- [ ] **Class length** <= 500 lines
+- [ ] **Async-first**: `async/await` for all I/O operations
 
 #### 5.4 — Database & Persistence (04)
 
 - [ ] **No N+1 queries**: uses `.in_()` + dict for batch loading
-- [ ] **Filter at DB level** with `.where()`, not Python after loading all
-- [ ] **Relationship loading**: `selectin` or `joinedload` for eager loading
-- [ ] **SELECT FOR UPDATE** only for critical concurrent operations
-- [ ] **Session lifecycle**: via `session_factory()` dependency, no manual `commit()`
-- [ ] **Read/write split**: `RoutingSession` handles routing — no manual engine selection
-- [ ] **SQLAlchemy 2.x style**: `select()` + `session.execute()`, not legacy `Query` API
-- [ ] **No raw SQL** unless documented and justified
+- [ ] **Filter at DB level**, not in Python after loading all
+- [ ] **Eager loading**: `selectinload()` / `joinedload()` for relationships
+- [ ] **Session via `Depends(session_factory)`** — no manual session creation
+- [ ] **`@Transactional`** for multi-statement writes
+- [ ] **`Mapped[type]`** annotations for all columns (SQLAlchemy 2.x)
+- [ ] **Indexed columns** in `WHERE`, `JOIN`, `ORDER BY`
 
 #### 5.5 — System Design (05)
 
-- [ ] **Async-first**: all I/O uses `async/await`
-- [ ] **No sync HTTP clients** (`requests`) in async context — use `httpx.AsyncClient`
+- [ ] **Async-first**: no blocking calls in async context
+- [ ] **Idempotent consumers** for messaging
 - [ ] **Cache keys have TTL** — no infinite cache
-- [ ] **Distributed locks** for scheduled jobs in multi-instance
-- [ ] **List endpoints** are paginated
-- [ ] **Race conditions** checked in find-or-create flows
+- [ ] **List endpoints** are paginated or bounded
+- [ ] **Error handling** via `BackendError` subclasses
 
 #### 5.6 — Decorators & Middleware (06)
 
-- [ ] **Cross-cutting concerns** (logging, audit, perf) use decorators or middleware
-- [ ] **Auth** handled via FastAPI `Depends()` dependencies
+- [ ] **Cross-cutting concerns** use decorators/middleware, not inline code
+- [ ] **`@Transactional`** for write operations
 - [ ] **Decorators NOT used** for core business logic
+- [ ] **`Depends()`** for route-specific DI
 
 #### 5.7 — Code Quality (07)
 
-- [ ] **Logging**: `{ClassName} - {method_name} - {message}` with `logging` module
-- [ ] **No `print()` calls** — use `logging` or `loguru`
-- [ ] **Error handling**: `BackendError` subclasses with module-specific error codes
-- [ ] **No hardcoded config values**: use `pydantic-settings` from environment
-- [ ] **Import order**: stdlib → third-party → local
+- [ ] **Logging**: `loguru`, format `{ClassName} - {method_name} - {message}`
+- [ ] **No `print()` statements** in application code
+- [ ] **Error codes**: defined as `StrEnum` in module `exceptions.py`
+- [ ] **No hardcoded config values**: use `pydantic-settings`
 - [ ] **No commented-out code**
-- [ ] **Google-style docstrings** on all public functions
+- [ ] **No inline comments** explaining what (only comment complex WHY)
+- [ ] **Google-style docstrings** on public functions
 
 #### 5.8 — API & Schema Patterns (08)
 
-- [ ] **API path convention** matches project patterns
-- [ ] **Request schemas** have `Field()` validation
-- [ ] **Response schemas** use `from_attributes=True` via `ResponseObjectSchema`
-- [ ] **Sensitive fields** (password, tokens) NOT in response schemas
-- [ ] **`model_dump(exclude_unset=True)`** for partial updates
-- [ ] **`model_validate()`** to convert ORM → response schema
-
-#### 5.9 — Alembic Migration (08)
-
-- [ ] **Auto-generated** with descriptive message
-- [ ] **Both upgrade and downgrade** functions present
-- [ ] **Column types, indexes, constraints** verified after auto-generation
-- [ ] **Not modified** after applying to shared environments
+- [ ] **Request schemas** have validation (`Field`, `field_validator`)
+- [ ] **Response schemas** have NO validation — serialization only
+- [ ] **`APIResponse` wrapper** for all API responses
+- [ ] **NEVER return ORM models** from API endpoints
+- [ ] **Pagination** for list endpoints
+- [ ] **`model_validate(obj, from_attributes=True)`** for ORM -> schema
 
 ---
 
 ### 6. Generate the Review Report
 
-Output the review as a structured report using this template:
+Output the review as a structured report:
 
 ```markdown
 # Code Review Report
@@ -211,33 +207,33 @@ Output the review as a structured report using this template:
 | Risk | Level | Details |
 |---|---|---|
 | N+1 Query | High | {description or N/A} |
-| Session Safety | Medium | {description or N/A} |
+| Transaction Safety | Medium | {description or N/A} |
 | Layer Violation | High | {description or N/A} |
 | Security | High | {description or N/A} |
-| Concurrency | Medium | {description or N/A} |
+| Async Safety | Medium | {description or N/A} |
 | Naming | Low | {description or N/A} |
 
 ---
 
 ## Merge Decision
 
-- **BLOCKER violations** → **DO NOT MERGE** — must fix first
-- **WARNING violations** → **MERGE WITH CAUTION** — should fix soon
-- **INFO only** → **READY TO MERGE**
+- **BLOCKER violations** -> DO NOT MERGE — must fix first
+- **WARNING violations** -> MERGE WITH CAUTION — should fix soon
+- **INFO only** -> READY TO MERGE
 ```
 
 ### 7. Severity Classification
 
 | Level | Meaning | Merge? |
 |---|---|---|
-| **BLOCKER** | Architecture violation, N+1 query, security risk, session misuse, missing type hints | Must fix |
-| **WARNING** | Naming convention miss, function too long, hardcoded message, missing docstring | Should fix |
-| **INFO** | Style preference, minor naming improvement, optional optimization | Can merge |
+| **BLOCKER** | Architecture violation, N+1 query, security risk, blocking call in async, missing type hints on public API | Must fix |
+| **WARNING** | Naming convention miss, function too long, missing docstring, hardcoded message | Should fix |
+| **INFO** | Style preference, comment suggestion, minor naming improvement | Can merge |
 
 ### 8. Final output
 
 After generating the full report, clearly state the **final verdict**:
 
-- If ANY BLOCKER exists → state: **"BLOCKED — {N} blocker(s) must be fixed before merge"**
-- If only WARNING → state: **"MERGE WITH CAUTION — {N} warning(s) should be addressed"**
-- If clean → state: **"READY TO MERGE — All rules passed"**
+- If ANY BLOCKER exists -> state: **"BLOCKED — {N} blocker(s) must be fixed before merge"**
+- If only WARNING -> state: **"MERGE WITH CAUTION — {N} warning(s) should be addressed"**
+- If clean -> state: **"READY TO MERGE — All rules passed"**
