@@ -5,6 +5,7 @@ import datetime
 from sqlalchemy import String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from apps.auth.models import EmailVerification, RefreshToken
 from apps.core.database.sql.model.base import UUIDAuditBase
 from apps.core.database.sql.model.mixins import HasSoftDeletedMixin
 from apps.core.database.sql.types import DateTimeUTC
@@ -26,15 +27,11 @@ class User(UUIDAuditBase, HasSoftDeletedMixin):
     is_active: Mapped[bool] = mapped_column(default=False, nullable=False)
 
     # Email verification — set when OTP confirmation succeeds.
-    email_verified_at: Mapped[datetime.datetime | None] = mapped_column(
-        DateTimeUTC(timezone=True), nullable=True
-    )
+    email_verified_at: Mapped[datetime.datetime | None] = mapped_column(DateTimeUTC(timezone=True), nullable=True)
 
     # Google OAuth linkage — Google's stable user ID (`sub` claim). Unique
     # when not null so two users cannot share the same Google account.
-    google_sub: Mapped[str | None] = mapped_column(
-        String(255), unique=True, nullable=True, index=True
-    )
+    google_sub: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True, index=True)
 
     # TOTP-based 2FA. ``totp_secret`` is the base32 secret consumed by
     # authenticator apps. ``is_2fa_enabled`` is a separate flag because we
