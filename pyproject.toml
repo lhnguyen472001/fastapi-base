@@ -36,6 +36,7 @@ dev = [
     "respx>=0.22.0",
     "testcontainers[postgres]>=4.14.2",
 ]
+
 linter = [
     "ruff>=0.15.8",
 ]

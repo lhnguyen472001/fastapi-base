@@ -3,13 +3,16 @@
 import datetime
 import enum
 import uuid
+from typing import TYPE_CHECKING
 
 from sqlalchemy import ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from apps.core.database.sql.model.base import UUIDAuditBase
 from apps.core.database.sql.types import DateTimeUTC
-from apps.user.models import User
+
+if TYPE_CHECKING:
+    from apps.user.models import User
 
 
 class RefreshToken(UUIDAuditBase):
@@ -29,7 +32,7 @@ class RefreshToken(UUIDAuditBase):
         ForeignKey("refresh_tokens.id", ondelete="SET NULL"), nullable=True
     )
 
-    # Audit metadata so we can present an "active sessions" view in future.
+    # Audit metadata so we can present an "active sessions" view in the future.
     user_agent: Mapped[str | None] = mapped_column(String(255), nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
 

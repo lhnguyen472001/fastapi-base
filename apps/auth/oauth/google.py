@@ -1,10 +1,5 @@
-"""Thin async Google OAuth2 client built on httpx.
+"""Thin async Google OAuth2 client built on httpx."""
 
-Avoids `authlib` to keep the dependency surface minimal — Google's OAuth2 +
-OIDC userinfo flow is two HTTP calls and a couple of URL builders.
-"""
-
-from __future__ import annotations
 
 from dataclasses import dataclass
 from urllib.parse import urlencode
@@ -20,7 +15,7 @@ GOOGLE_USERINFO_ENDPOINT = "https://www.googleapis.com/oauth2/v3/userinfo"
 GOOGLE_OAUTH_SCOPES = "openid email profile"
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True, kw_only=True, frozen=True)
 class GoogleUserInfo:
     """Subset of Google's userinfo response that we care about."""
 

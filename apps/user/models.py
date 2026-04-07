@@ -1,14 +1,16 @@
 """User model."""
-
+from typing import TYPE_CHECKING
 import datetime
 
 from sqlalchemy import String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from apps.auth.models import EmailVerification, RefreshToken
 from apps.core.database.sql.model.base import UUIDAuditBase
 from apps.core.database.sql.model.mixins import HasSoftDeletedMixin
 from apps.core.database.sql.types import DateTimeUTC
+
+if TYPE_CHECKING:
+    from apps.auth.models import EmailVerification, RefreshToken
 
 
 class User(UUIDAuditBase, HasSoftDeletedMixin):
