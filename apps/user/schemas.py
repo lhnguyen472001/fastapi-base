@@ -3,8 +3,8 @@ import uuid
 
 from pydantic import EmailStr, Field
 
-from libs.schemas.request import OffsetPaginationRequestSchema, RequestObjectSchema
-from libs.schemas.response import ResponseObjectSchema
+from apps.core.schemas.request import OffsetPaginationRequestSchema, RequestObjectSchema
+from apps.core.schemas.response import ResponseObjectSchema
 
 
 class CreateUserRequest(RequestObjectSchema):

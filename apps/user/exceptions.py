@@ -1,6 +1,6 @@
 import enum
 
-from libs.exceptions.errors import ConflictError, NotFoundError
+from apps.core.exceptions.errors import ConflictError, NotFoundError
 
 
 class UserErrorCodes(enum.StrEnum):

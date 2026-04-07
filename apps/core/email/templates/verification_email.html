@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+<p style="font-size: 16px; line-height: 1.5;">Hi <strong>{{ username }}</strong>,</p>
+<p style="font-size: 16px; line-height: 1.5;">Use the verification code below to confirm your email address:</p>
+<p style="font-size: 32px; font-weight: 700; letter-spacing: 6px; text-align: center; padding: 16px; background: #f3f4f6; border-radius: 6px; color: #111827; margin: 24px 0;">
+  {{ code }}
+</p>
+<p style="font-size: 14px; color: #6b7280;">
+  This code expires in <strong>{{ ttl_minutes }} minutes</strong>.
+  If you didn't request this, you can safely ignore the email.
+</p>
+{% endblock %}

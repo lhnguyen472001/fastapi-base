@@ -1,0 +1,10 @@
+Hi {{ username }},
+
+Use the verification code below to confirm your email address:
+
+  {{ code }}
+
+This code expires in {{ ttl_minutes }} minutes.
+If you didn't request this, you can safely ignore the email.
+
+— {{ app_name }}

@@ -1,30 +1,47 @@
+"""User CRUD endpoints."""
+
 import uuid
 
 from dependency_injector.wiring import Provide, inject
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.core.database.sql.session import session_factory
+from apps.core.schemas.response import (
+    APIResponse,
+    JsonResponseStatuses,
+    PaginatedResponse,
+    ResponseCodes,
+)
 from apps.user.containers import UserContainer
-from apps.user.schemas import CreateUserRequest, ListUsersRequest, UpdateUserRequest, UserResponse
+from apps.user.schemas import (
+    CreateUserRequest,
+    ListUsersRequest,
+    UpdateUserRequest,
+    UserResponse,
+)
 from apps.user.services import UserService
-from libs.database.sql.session import session_factory
-from libs.schemas.response import APIResponse, JsonResponseStatuses, PaginatedResponse, ResponseCodes
 
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-@router.post("", response_model=APIResponse[UserResponse], status_code=201)
+@router.post(
+    "",
+    response_model=APIResponse[UserResponse],
+    status_code=status.HTTP_201_CREATED,
+)
 @inject
 async def create_user(
     data: CreateUserRequest,
     session: AsyncSession = Depends(session_factory),
-    service: UserService = Depends(Provide[UserContainer.user_service]),
+    user_service: UserService = Depends(Provide[UserContainer.user_service]),
 ) -> APIResponse[UserResponse]:
     """Create a new user."""
-    user = await service.create_user(session, data=data)
+    user = await user_service.create(session, data=data)
+    await session.commit()
     return APIResponse[UserResponse](
         code=ResponseCodes.API000,
-        data=user,
+        data=UserResponse.model_validate(user),
         status=JsonResponseStatuses.SUCCESS,
         message="User created successfully.",
     )
@@ -35,13 +52,13 @@ async def create_user(
 async def get_user(
     user_id: uuid.UUID,
     session: AsyncSession = Depends(session_factory),
-    service: UserService = Depends(Provide[UserContainer.user_service]),
+    user_service: UserService = Depends(Provide[UserContainer.user_service]),
 ) -> APIResponse[UserResponse]:
     """Get a user by ID."""
-    user = await service.get_user(session, user_id=user_id)
+    user = await user_service.get_by_id(session, user_id=user_id)
     return APIResponse[UserResponse](
         code=ResponseCodes.API000,
-        data=user,
+        data=UserResponse.model_validate(user),
         status=JsonResponseStatuses.SUCCESS,
         message="User retrieved successfully.",
     )
@@ -52,13 +69,18 @@ async def get_user(
 async def list_users(
     params: ListUsersRequest = Depends(),
     session: AsyncSession = Depends(session_factory),
-    service: UserService = Depends(Provide[UserContainer.user_service]),
+    user_service: UserService = Depends(Provide[UserContainer.user_service]),
 ) -> APIResponse[PaginatedResponse[UserResponse]]:
     """List users with pagination."""
-    result = await service.list_users(session, params=params)
+    items, total = await user_service.list_users(session, params=params)
     return APIResponse[PaginatedResponse[UserResponse]](
         code=ResponseCodes.API000,
-        data=result,
+        data=PaginatedResponse[UserResponse](
+            items=[UserResponse.model_validate(u) for u in items],
+            total=total,
+            limit=params.limit,
+            offset=params.offset,
+        ),
         status=JsonResponseStatuses.SUCCESS,
         message="Users retrieved successfully.",
     )
@@ -70,13 +92,14 @@ async def update_user(
     user_id: uuid.UUID,
     data: UpdateUserRequest,
     session: AsyncSession = Depends(session_factory),
-    service: UserService = Depends(Provide[UserContainer.user_service]),
+    user_service: UserService = Depends(Provide[UserContainer.user_service]),
 ) -> APIResponse[UserResponse]:
     """Update an existing user."""
-    user = await service.update_user(session, user_id=user_id, data=data)
+    user = await user_service.update(session, user_id=user_id, data=data)
+    await session.commit()
     return APIResponse[UserResponse](
         code=ResponseCodes.API000,
-        data=user,
+        data=UserResponse.model_validate(user),
         status=JsonResponseStatuses.SUCCESS,
         message="User updated successfully.",
     )
@@ -87,13 +110,14 @@ async def update_user(
 async def delete_user(
     user_id: uuid.UUID,
     session: AsyncSession = Depends(session_factory),
-    service: UserService = Depends(Provide[UserContainer.user_service]),
+    user_service: UserService = Depends(Provide[UserContainer.user_service]),
 ) -> APIResponse[UserResponse]:
     """Soft-delete a user."""
-    user = await service.delete_user(session, user_id=user_id)
+    user = await user_service.soft_delete(session, user_id=user_id)
+    await session.commit()
     return APIResponse[UserResponse](
         code=ResponseCodes.API000,
-        data=user,
+        data=UserResponse.model_validate(user),
         status=JsonResponseStatuses.SUCCESS,
         message="User deleted successfully.",
     )
