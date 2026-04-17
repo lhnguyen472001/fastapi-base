@@ -8,6 +8,30 @@ from apps.core.schemas.response import JsonResponseStatuses, ResponseCodes
 from .base import BackendError
 
 
+def unhandled_exception_handler(_: Request, exc: Exception) -> ORJSONResponse:
+    """Catch-all handler for exceptions not covered by specific handlers.
+
+    Prevents raw tracebacks from leaking in production responses.
+
+    Args:
+        _: FastAPI Request instance.
+        exc: The unhandled exception.
+
+    Returns:
+        ORJSONResponse with a generic 500 error body.
+    """
+    logger.exception("Unhandled exception: {}", exc)
+    return ORJSONResponse(
+        status_code=500,
+        content={
+            "code": ResponseCodes.API003,
+            "data": None,
+            "status": JsonResponseStatuses.ERROR,
+            "message": "Internal server error.",
+        },
+    )
+
+
 def backend_exception_handler(_: Request, exc: BackendError) -> ORJSONResponse:
     """Handler for BackendError.
 

@@ -1,5 +1,6 @@
 import enum
-from typing import Generic, Sequence, TypeVar
+from collections.abc import Sequence
+from typing import TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -9,9 +10,9 @@ from .base import BaseObjectSchema
 class JsonResponseStatuses(enum.StrEnum):
     """Statuses for JSON responses."""
 
-    SUCCESS = "success"  # 2** response codes
-    ERROR = "error"  # 4** response codes
-    FAIL = "fail"  # 5** response codes
+    SUCCESS = "success"  # 2xx response codes
+    FAIL = "fail"  # 4xx client errors
+    ERROR = "error"  # 5xx server errors
 
 
 class ResponseCodes(enum.StrEnum):
@@ -22,9 +23,13 @@ class ResponseCodes(enum.StrEnum):
     """
 
     API000 = "API000"  # Success
-    API001 = "API001"  # Bad request
-    API002 = "API002"  # Validation error
-    API003 = "API003"  # Internal server error
+    API001 = "API001"  # Bad request (400)
+    API002 = "API002"  # Validation error (422)
+    API003 = "API003"  # Internal server error (500)
+    API004 = "API004"  # Unauthorized (401)
+    API005 = "API005"  # Forbidden (403)
+    API006 = "API006"  # Not found (404)
+    API007 = "API007"  # Conflict (409)
 
 
 class ResponseObjectSchema(BaseObjectSchema):
@@ -44,7 +49,7 @@ class ResponseObjectSchema(BaseObjectSchema):
 ResponseObjectT = TypeVar("ResponseObjectT", bound="ResponseObjectSchema")
 
 
-class APIResponse(BaseModel, Generic[ResponseObjectT]):
+class APIResponse[ResponseObjectT: "ResponseObjectSchema"](BaseModel):
     """Base schema for all JSON response objects."""
 
     model_config = ConfigDict(
@@ -59,7 +64,7 @@ class APIResponse(BaseModel, Generic[ResponseObjectT]):
     message: str = Field(..., description="Response message")
 
 
-class PaginatedResponse(ResponseObjectSchema, Generic[ResponseObjectT]):
+class PaginatedResponse[ResponseObjectT: "ResponseObjectSchema"](ResponseObjectSchema):
     """Pagination schema for offset-based pagination."""
 
     items: Sequence[ResponseObjectT] = Field(default_factory=list, description="Items on current page")

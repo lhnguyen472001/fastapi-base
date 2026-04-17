@@ -6,7 +6,7 @@ from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.core.database.sql.session import session_factory
+from apps.core.database.session import session_factory
 from apps.core.schemas.response import (
     APIResponse,
     JsonResponseStatuses,
@@ -38,7 +38,6 @@ async def create_user(
 ) -> APIResponse[UserResponse]:
     """Create a new user."""
     user = await user_service.create(session, data=data)
-    await session.commit()
     return APIResponse[UserResponse](
         code=ResponseCodes.API000,
         data=UserResponse.model_validate(user),
@@ -96,7 +95,6 @@ async def update_user(
 ) -> APIResponse[UserResponse]:
     """Update an existing user."""
     user = await user_service.update(session, user_id=user_id, data=data)
-    await session.commit()
     return APIResponse[UserResponse](
         code=ResponseCodes.API000,
         data=UserResponse.model_validate(user),
@@ -114,7 +112,6 @@ async def delete_user(
 ) -> APIResponse[UserResponse]:
     """Soft-delete a user."""
     user = await user_service.soft_delete(session, user_id=user_id)
-    await session.commit()
     return APIResponse[UserResponse](
         code=ResponseCodes.API000,
         data=UserResponse.model_validate(user),

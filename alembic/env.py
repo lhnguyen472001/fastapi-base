@@ -18,9 +18,11 @@ if config.config_file_name is not None:
 
 # Import all models so they register with the shared metadata
 from apps.auth import models as _auth_models  # noqa: E402, F401
-from apps.core.database.sql.registry import orm_registry  # noqa: E402
+from apps.core.database.registry import orm_registry  # noqa: E402
 from apps.settings import app_settings  # noqa: E402
 from apps.user import models as _user_models  # noqa: E402, F401
+from apps.rbac import models as _rbac_models  # noqa: E402, F401
+from apps.product import models as _product_models  # noqa: E402, F401
 
 target_metadata = orm_registry.metadata
 
@@ -89,9 +91,7 @@ async def run_async_migrations() -> None:
     section = config.get_section(config.config_ini_section, {})
     # Override the masked URL with the real one (with password) for the engine,
     # without writing it back to the ini option that gets logged.
-    section["sqlalchemy.url"] = app_settings.db.database_uri.render_as_string(
-        hide_password=False
-    )
+    section["sqlalchemy.url"] = app_settings.db.database_uri.render_as_string(hide_password=False)
     connectable = async_engine_from_config(
         section,
         prefix="sqlalchemy.",

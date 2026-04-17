@@ -6,7 +6,13 @@ from dependency_injector import containers, providers
 
 from apps.auth.oauth import GoogleOAuthClient
 from apps.auth.repository import EmailVerificationRepository, RefreshTokenRepository
-from apps.auth.services import AuthService
+from apps.auth.services import (
+    AuthService,
+    EmailVerificationService,
+    OAuthService,
+    TokenService,
+    TwoFactorService,
+)
 from apps.core.email import EmailRenderer, SmtpEmailSender
 from apps.settings import app_settings
 from apps.user.repositories import UserRepository
@@ -16,9 +22,7 @@ from apps.user.services import UserService
 class AuthContainer(containers.DeclarativeContainer):
     """Wires the auth service graph and activates @inject in routes/dependencies."""
 
-    wiring_config = containers.WiringConfiguration(
-        modules=["apps.auth.routes", "apps.auth.dependencies"]
-    )
+    wiring_config = containers.WiringConfiguration(modules=["apps.auth.routes", "apps.auth.dependencies"])
 
     # Repositories
     user_repository = providers.Factory(UserRepository)
@@ -51,15 +55,34 @@ class AuthContainer(containers.DeclarativeContainer):
         redirect_uri=app_settings.auth.google_redirect_uri,
     )
 
-    # Service under test
-    auth_service = providers.Factory(
-        AuthService,
+    # Auth sub-services (per 3.2 split).
+    token_service = providers.Factory(
+        TokenService,
         user_service=user_service,
         refresh_token_repository=refresh_token_repository,
+    )
+    email_verification_service = providers.Factory(
+        EmailVerificationService,
+        user_service=user_service,
         email_verification_repository=email_verification_repository,
         email_sender=email_sender,
         email_renderer=email_renderer,
+    )
+    two_factor_service = providers.Factory(TwoFactorService)
+    oauth_service = providers.Factory(
+        OAuthService,
+        user_service=user_service,
         google_oauth_client=google_oauth_client,
+    )
+
+    # Facade consumed by routes / dependencies.
+    auth_service = providers.Factory(
+        AuthService,
+        user_service=user_service,
+        token_service=token_service,
+        email_verification_service=email_verification_service,
+        two_factor_service=two_factor_service,
+        oauth_service=oauth_service,
     )
 
 

@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import Select
 
-from apps.core.database.sql.filters import (
+from apps.core.database.filters import (
     BeforeAfter,
     CollectionFilter,
     ComparisonFilter,
@@ -22,8 +22,8 @@ from apps.core.database.sql.filters import (
     NotInCollectionFilter,
     OrderBy,
 )
-from apps.core.database.sql.model.base import UUIDAuditBase
-from apps.core.database.sql.repository.base import BaseSQLAlchemyRepository
+from apps.core.database.model.base import UUIDAuditBase
+from apps.core.database.repository.base import BaseSQLAlchemyRepository
 
 
 class _Item(UUIDAuditBase):
@@ -225,9 +225,7 @@ async def test_update_applies_dict_fields() -> None:
     repo = _ItemRepository()
     session = _make_session(scalar_one_or_none=existing)
 
-    result = await repo.update(
-        session, item_id=uuid.uuid4(), data={"name": "new", "value": 99}
-    )
+    result = await repo.update(session, item_id=uuid.uuid4(), data={"name": "new", "value": 99})
 
     assert result is existing
     assert existing.name == "new"

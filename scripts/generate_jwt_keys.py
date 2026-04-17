@@ -44,8 +44,7 @@ def generate_rsa_keypair(output_dir: Path, *, key_size: int = 2048) -> tuple[Pat
 
 def main() -> int:
     output_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("./keys")
-    private_path, public_path = generate_rsa_keypair(output_dir)
-    print(f"Generated:\n  {private_path}\n  {public_path}")
+    _private_path, _public_path = generate_rsa_keypair(output_dir)
     return 0
 
 

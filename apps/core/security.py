@@ -7,6 +7,7 @@ All cryptographic configuration (key paths, TTLs, OTP length) is read from
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import hashlib
 import secrets
@@ -34,18 +35,43 @@ CHALLENGE_TOKEN_TYPE = "2fa_challenge"
 
 
 def hash_password(plain_password: str) -> str:
-    """Hash a plaintext password with bcrypt and a fresh salt."""
+    """Hash a plaintext password with bcrypt and a fresh salt.
+
+    Synchronous. Safe to call from scripts, seed helpers, and tests.
+    In async request paths, prefer :func:`hash_password_async` so the
+    bcrypt work (CPU-bound, ~200-500 ms at rounds=12) does not block
+    the event loop.
+    """
     salt = bcrypt.gensalt(rounds=_BCRYPT_ROUNDS)
     hashed = bcrypt.hashpw(plain_password.encode("utf-8"), salt)
     return hashed.decode("utf-8")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a plaintext password against a stored bcrypt hash."""
+    """Verify a plaintext password against a stored bcrypt hash.
+
+    Synchronous counterpart of :func:`verify_password_async`. Use the
+    async version on request paths.
+    """
     return bcrypt.checkpw(
         plain_password.encode("utf-8"),
         hashed_password.encode("utf-8"),
     )
+
+
+async def hash_password_async(plain_password: str) -> str:
+    """Async wrapper around :func:`hash_password`.
+
+    Runs the CPU-bound bcrypt work on the default thread-pool executor
+    so the asyncio event loop stays responsive under concurrent logins
+    and registrations.
+    """
+    return await asyncio.to_thread(hash_password, plain_password)
+
+
+async def verify_password_async(plain_password: str, hashed_password: str) -> bool:
+    """Async wrapper around :func:`verify_password`."""
+    return await asyncio.to_thread(verify_password, plain_password, hashed_password)
 
 
 # --------------------------- JWT (RS256) ------------------------------------
@@ -170,9 +196,7 @@ def decode_token(token: str, *, expected_type: str) -> dict[str, Any]:
         raise TokenError(f"Invalid token: {e}") from e
 
     if payload.get("type") != expected_type:
-        raise TokenError(
-            f"Wrong token type: expected '{expected_type}', got '{payload.get('type')}'"
-        )
+        raise TokenError(f"Wrong token type: expected '{expected_type}', got '{payload.get('type')}'")
     return payload
 
 

@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import uuid
+from typing import TYPE_CHECKING
 
-
-from apps.core.database.sql.filters import (
+from apps.core.database.filters import (
     CollectionFilter,
     ComparisonFilter,
     LimitOffsetPaginationFilter,
     NotInCollectionFilter,
     OrderBy,
 )
-from tests.integration._models import Widget, WidgetRepository
 
+if TYPE_CHECKING:
+    from tests.integration._models import Widget, WidgetRepository
 
 # ------------------------------ helpers -------------------------------------
 
@@ -36,9 +37,7 @@ async def _seed(session, repo: WidgetRepository, n: int = 5) -> list[Widget]:
 
 
 async def test_add_persists_row(session, widget_repo) -> None:
-    item = await widget_repo.add(
-        session, {"name": "alpha", "quantity": 3}, expunge=False
-    )
+    item = await widget_repo.add(session, {"name": "alpha", "quantity": 3}, expunge=False)
     await session.commit()
 
     assert item.id is not None
@@ -136,9 +135,7 @@ async def test_list_and_count_zero(session, widget_repo) -> None:
 async def test_comparison_filter_gt(session, widget_repo) -> None:
     await _seed(session, widget_repo, n=5)  # quantities 0..4
 
-    items = await widget_repo.list_items(
-        session, ComparisonFilter(field_name="quantity", operator="gt", value=2)
-    )
+    items = await widget_repo.list_items(session, ComparisonFilter(field_name="quantity", operator="gt", value=2))
     assert sorted(i.quantity for i in items) == [3, 4]
 
 
@@ -155,27 +152,21 @@ async def test_comparison_filter_between(session, widget_repo) -> None:
 async def test_collection_filter_in(session, widget_repo) -> None:
     await _seed(session, widget_repo, n=5)
 
-    items = await widget_repo.list_items(
-        session, CollectionFilter(field_name="name", values=["w0", "w2"])
-    )
+    items = await widget_repo.list_items(session, CollectionFilter(field_name="name", values=["w0", "w2"]))
     assert sorted(i.name for i in items) == ["w0", "w2"]
 
 
 async def test_collection_filter_empty_returns_no_rows(session, widget_repo) -> None:
     await _seed(session, widget_repo, n=3)
 
-    items = await widget_repo.list_items(
-        session, CollectionFilter(field_name="name", values=[])
-    )
+    items = await widget_repo.list_items(session, CollectionFilter(field_name="name", values=[]))
     assert items == []
 
 
 async def test_not_in_collection_filter(session, widget_repo) -> None:
     await _seed(session, widget_repo, n=4)
 
-    items = await widget_repo.list_items(
-        session, NotInCollectionFilter(field_name="name", values=["w0", "w1"])
-    )
+    items = await widget_repo.list_items(session, NotInCollectionFilter(field_name="name", values=["w0", "w1"]))
     assert sorted(i.name for i in items) == ["w2", "w3"]
 
 
@@ -197,9 +188,7 @@ async def test_update_dict_changes_fields(session, widget_repo) -> None:
     seeded = await _seed(session, widget_repo, n=1)
     item = seeded[0]
 
-    updated = await widget_repo.update(
-        session, item_id=item.id, data={"name": "renamed", "quantity": 99}
-    )
+    updated = await widget_repo.update(session, item_id=item.id, data={"name": "renamed", "quantity": 99})
     await session.commit()
 
     assert updated is not None
@@ -268,9 +257,7 @@ async def test_delete_removes_row(session, widget_repo) -> None:
 async def test_delete_where_returns_deleted(session, widget_repo) -> None:
     await _seed(session, widget_repo, n=5)
 
-    deleted = await widget_repo.delete_where(
-        session, ComparisonFilter(field_name="quantity", operator="ge", value=3)
-    )
+    deleted = await widget_repo.delete_where(session, ComparisonFilter(field_name="quantity", operator="ge", value=3))
     await session.commit()
 
     assert deleted is not None
@@ -281,9 +268,7 @@ async def test_delete_where_returns_deleted(session, widget_repo) -> None:
 # ------------------------------- soft delete --------------------------------
 
 
-async def test_soft_delete_filter_excludes_deleted_rows(
-    session, soft_widget_repo
-) -> None:
+async def test_soft_delete_filter_excludes_deleted_rows(session, soft_widget_repo) -> None:
     a = await soft_widget_repo.add(session, {"name": "live"}, expunge=False)
     b = await soft_widget_repo.add(session, {"name": "ghost"}, expunge=False)
     b.delete()  # mark soft-deleted

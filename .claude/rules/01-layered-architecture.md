@@ -26,7 +26,7 @@ from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.core.database.sql.session import session_factory
+from apps.core.database.session import session_factory
 from apps.core.schemas.response import APIResponse, JsonResponseStatuses, ResponseCodes
 from apps.user.containers import UserContainer
 from apps.user.schemas import UserResponse, CreateUserRequest
@@ -34,12 +34,13 @@ from apps.user.services import UserService
 
 router = APIRouter(prefix="/users", tags=["users"])
 
+
 @router.post("", response_model=APIResponse[UserResponse], status_code=201)
 @inject
 async def create_user(
-    data: CreateUserRequest,
-    session: AsyncSession = Depends(session_factory),
-    user_service: UserService = Depends(Provide[UserContainer.user_service]),
+        data: CreateUserRequest,
+        session: AsyncSession = Depends(session_factory),
+        user_service: UserService = Depends(Provide[UserContainer.user_service]),
 ) -> APIResponse[UserResponse]:
     user = await user_service.create(session, data=data)
     return APIResponse[UserResponse](
@@ -75,8 +76,9 @@ class UserService(SQLAlchemyService[User]):
 - Use `StatementFilter` subclasses for composable query filtering
 
 ```python
-from apps.core.database.sql.repository.base import BaseSQLAlchemyRepository
+from apps.core.database.repository.base import BaseSQLAlchemyRepository
 from apps.user.models import User
+
 
 class UserRepository(BaseSQLAlchemyRepository[User]):
     """User data access."""
@@ -92,7 +94,8 @@ class UserRepository(BaseSQLAlchemyRepository[User]):
 
 ```python
 from sqlalchemy.orm import Mapped, mapped_column
-from apps.core.database.sql.model.base import UUIDAuditBase
+from apps.core.database.model.base import UUIDAuditBase
+
 
 class User(UUIDAuditBase):
     """User model."""

@@ -6,7 +6,11 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import Response
 
-from apps.core.database.sql.session import reset_session_ctx, scoped_session, set_session_ctx
+from apps.core.database.session import (
+    reset_session_ctx,
+    scoped_session,
+    set_session_ctx,
+)
 
 
 class SQLAlchemySessionMiddleware(BaseHTTPMiddleware):

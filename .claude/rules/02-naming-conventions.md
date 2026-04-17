@@ -50,7 +50,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Mapped, mapped_column
 
 # 3. local (always use apps.* prefix)
-from apps.core.database.sql.model.base import UUIDAuditBase
+from apps.core.database.model.base import UUIDAuditBase
 from apps.core.schemas.response import APIResponse
 from apps.user.models import User
 ```

@@ -25,5 +25,69 @@ services:
       - "1025:1025"  # SMTP listener (no auth, no TLS)
       - "8025:8025"  # Web UI + JSON HTTP API
 
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fastapi-base-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mailhog:
+        condition: service_started
+    environment:
+      # Endpoint
+      HOST: 0.0.0.0
+      PORT: 8000
+      RELOAD: "false"
+      WORKERS: 2
+      APP_NAME: FastAPI Base
+      # Database (point at the postgres service on the compose network)
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_DATABASE: fastapi_base
+      # Email (MailHog)
+      EMAIL_SMTP_HOST: mailhog
+      EMAIL_SMTP_PORT: 1025
+      EMAIL_SMTP_USE_TLS: "false"
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount the RSA JWT keys from the host. Generate them with
+      # ``uv run python scripts/generate_jwt_keys.py`` before starting.
+      - ./keys:/app/keys:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  localstack:
+    image: localstack/localstack:latest
+    container_name: fastapi_base-localstack
+    restart: always
+    environment:
+      - SERVICES=sqs,s3
+      - DEBUG=1
+      - DATA_DIR=/var/lib/localstack
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - PERSISTENCE=1
+    volumes:
+      - localstack_data:/var/lib/localstack
+      - /Users/lhnguyen4748/.colima/default/docker.sock:/var/run/docker.sock
+    networks:
+      - app-network
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:4566/_localstack/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+
 volumes:
   postgres_data:
+  localstack_data:

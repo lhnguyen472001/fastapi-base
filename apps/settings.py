@@ -14,9 +14,7 @@ class DatabaseSettings(BaseModel):
     host: str = Field(default="localhost", description="Database host")
     port: int = Field(default=5432, description="Database port")
     user: str = Field(default="postgres", description="Database user")
-    password: SecretStr = Field(
-        default=SecretStr("postgres"), description="Database password"
-    )
+    password: SecretStr = Field(default=SecretStr("postgres"), description="Database password")
     database: str = Field(default="fastapi_base", description="Database name")
 
     pool_size: int = Field(default=10, description="Pool size")
@@ -34,9 +32,7 @@ class DatabaseSettings(BaseModel):
     def build_database_uri(self) -> "DatabaseSettings":
         """Build the database URL from connection settings."""
         self.database_uri = URL.create(
-            drivername=f"postgresql+{self.driver}"
-            if "+" not in self.driver
-            else self.driver,
+            drivername=f"postgresql+{self.driver}" if "+" not in self.driver else self.driver,
             username=self.user,
             password=self.password.get_secret_value(),
             host=self.host,
@@ -61,9 +57,7 @@ class AuthSettings(BaseModel):
     )
     access_token_expire_minutes: int = Field(default=15, ge=1)
     refresh_token_expire_days: int = Field(default=30, ge=1)
-    challenge_token_expire_minutes: int = Field(
-        default=5, ge=1, description="Lifetime of the 2FA challenge JWT"
-    )
+    challenge_token_expire_minutes: int = Field(default=5, ge=1, description="Lifetime of the 2FA challenge JWT")
 
     # OTP (email verification)
     otp_length: int = Field(default=6, ge=4, le=10)
@@ -76,8 +70,22 @@ class AuthSettings(BaseModel):
     # Google OAuth2
     google_client_id: str = Field(default="")
     google_client_secret: SecretStr = Field(default=SecretStr(""))
-    google_redirect_uri: str = Field(
-        default="http://localhost:8000/api/v1/auth/oauth/google/callback"
+    google_redirect_uri: str = Field(default="http://localhost:8000/api/v1/auth/oauth/google/callback")
+
+
+class RBACSettings(BaseModel):
+    """RBAC / Casbin settings."""
+
+    # Optional Redis-backed watcher. When set, ``create_enforcer`` attaches a
+    # pub/sub watcher so policy mutations on one worker invalidate the in-memory
+    # enforcer on every other worker. Required before running
+    # ``uvicorn --workers >1``; leave unset for single-worker dev.
+    #
+    # Install the optional dependency separately, e.g.:
+    #     uv add casbin-redis-watcher
+    watcher_redis_url: str | None = Field(
+        default=None,
+        description="Redis URL for the Casbin watcher (e.g. redis://localhost:6379/0)",
     )
 
 
@@ -114,15 +122,18 @@ class ApplicationSettings(BaseSettings):
     reload: bool = Field(default=False, description="Reload")
     workers: int = Field(default=1, description="Workers")
     app_name: str = Field(default="FastAPI Base", description="Application display name")
-
-    db: DatabaseSettings = Field(
-        default_factory=DatabaseSettings, description="Database settings"
+    cors_origins: list[str] = Field(
+        default=["http://localhost:3000"],
+        description="Allowed CORS origins (set via CORS_ORIGINS env var)",
     )
+
+    db: DatabaseSettings = Field(default_factory=DatabaseSettings, description="Database settings")
     auth: AuthSettings = Field(default_factory=AuthSettings, description="Auth settings")
     email: EmailSettings = Field(default_factory=EmailSettings, description="Email settings")
+    rbac: RBACSettings = Field(default_factory=RBACSettings, description="RBAC / Casbin settings")
 
 
-@functools.lru_cache()
+@functools.lru_cache
 def get_settings() -> ApplicationSettings:
     """Get the application settings."""
     return ApplicationSettings()

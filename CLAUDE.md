@@ -112,6 +112,7 @@ class UserContainer(containers.DeclarativeContainer):
 
 ## Important
 
+- **RBAC / Casbin & multi-worker:** the Casbin enforcer is per-worker in-memory. Running with `uvicorn --workers >1` will cause stale-cache reads after policy mutations until each worker reloads. Stay on `--workers 1` until a Casbin watcher (e.g. Redis pub/sub) is wired in. See `apps/rbac/enforcer.py` warning.
 - **Imports:** Use `apps.*` prefix for all local imports (e.g., `from apps.core.database.sql.engine import ...`)
 - **Sessions:** Use `Depends(session_factory)` in routes — auto read/write split via `RoutingSession`
 - **DI:** Use `@inject` + `Depends(Provide[Container.service])` — never manually instantiate services in routes

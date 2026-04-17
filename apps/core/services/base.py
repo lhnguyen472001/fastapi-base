@@ -1,13 +1,36 @@
-from collections.abc import Sequence
-from typing import Any, Dict, Generic, Type
+"""Generic read/write/read+write SQLAlchemy service bases.
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_scoped_session
+Return-type convention
+----------------------
+
+Service methods may return either ORM models or Pydantic schemas:
+
+* **Route-facing public methods** should prefer returning the ORM model and
+  let the route convert via ``ResponseSchema.model_validate(obj)``. This is
+  the default pattern everywhere in this project.
+* **Inter-service calls** always use the ORM model, because consumers
+  (e.g. :class:`apps.auth.services.AuthService` reading ``user.is_2fa_enabled``
+  / ``user.hashed_password`` from :meth:`apps.user.services.UserService.get_by_id`)
+  need ORM-only attributes and relationships that Pydantic response schemas
+  deliberately hide.
+* The optional ``schema_type=`` argument on the base methods below is a
+  convenience that routes are free to use when no inter-service reuse is
+  expected; domain services currently omit it and return models.
+
+In short: returning the model is always safe for inter-service consumers;
+returning a schema is a route-layer responsibility and should not be done
+from methods that will also be called by another service.
+"""
+
+from collections.abc import Sequence
+from typing import Any, Generic
+
 from sqlalchemy.sql.elements import ColumnElement
 
-from apps.core.database.sql.filters import StatementFilter
-from apps.core.database.sql.repository import SQLAlchemyRepositoryProtocol
-from apps.core.database.sql.transactional import transactional
-from apps.core.database.sql.types import SQLAlchemyModelT
+from apps.core.database.filters import StatementFilter
+from apps.core.database.repository import SQLAlchemyRepositoryProtocol
+from apps.core.database.transactional import transactional
+from apps.core.database.types import SessionType, SQLAlchemyModelT
 from apps.core.schemas.base import SchemaT
 from apps.core.services.utils import ResultConverter
 
@@ -31,10 +54,10 @@ class SQLAlchemyReadService(BaseSQLAlchemyService[SQLAlchemyModelT], Generic[SQL
 
     async def get_by_id(
         self,
-        session: AsyncSession | async_scoped_session[AsyncSession],
+        session: SessionType,
         item_id: Any,
         *,
-        schema_type: Type[SchemaT] | None = None,
+        schema_type: type[SchemaT] | None = None,
     ) -> SchemaT | SQLAlchemyModelT | None:
         """Retrieve a single record by ID.
 
@@ -61,10 +84,10 @@ class SQLAlchemyReadService(BaseSQLAlchemyService[SQLAlchemyModelT], Generic[SQL
 
     async def get_one(
         self,
-        session: AsyncSession | async_scoped_session[AsyncSession],
+        session: SessionType,
         filters: SchemaT | None = None,
         *,
-        schema_type: Type[SchemaT] | None = None,
+        schema_type: type[SchemaT] | None = None,
         **kwargs: Any,
     ) -> SchemaT | SQLAlchemyModelT | None:
         """Retrieve a single record by filters.
@@ -84,9 +107,9 @@ class SQLAlchemyReadService(BaseSQLAlchemyService[SQLAlchemyModelT], Generic[SQL
 
     async def list_items(
         self,
-        session: AsyncSession | async_scoped_session[AsyncSession],
+        session: SessionType,
         filters: SchemaT | Sequence[StatementFilter | ColumnElement[bool]] | None = None,
-        schema_type: Type[SchemaT] | None = None,
+        schema_type: type[SchemaT] | None = None,
         **kwargs: Any,
     ) -> Sequence[SchemaT] | Sequence[SQLAlchemyModelT]:
         """List all records matching filters.
@@ -122,10 +145,10 @@ class SQLAlchemyReadService(BaseSQLAlchemyService[SQLAlchemyModelT], Generic[SQL
 
     async def list_with_count(
         self,
-        session: AsyncSession | async_scoped_session[AsyncSession],
+        session: SessionType,
         filters: SchemaT | None = None,
         *,
-        schema_type: Type[SchemaT] | None = None,
+        schema_type: type[SchemaT] | None = None,
         **kwargs: Any,
     ) -> tuple[Sequence[SchemaT | SQLAlchemyModelT], int]:
         """List records with total count.
@@ -150,10 +173,10 @@ class SQLAlchemyWriteService(BaseSQLAlchemyService[SQLAlchemyModelT]):  # type: 
     @transactional
     async def create(
         self,
-        session: AsyncSession | async_scoped_session[AsyncSession],
-        data: Dict[str, Any] | SchemaT,
+        session: SessionType,
+        data: dict[str, Any] | SchemaT,
         *,
-        schema_type: Type[SchemaT] | None = None,
+        schema_type: type[SchemaT] | None = None,
     ) -> SchemaT:
         """Create a new record.
 
@@ -178,10 +201,10 @@ class SQLAlchemyWriteService(BaseSQLAlchemyService[SQLAlchemyModelT]):  # type: 
     @transactional
     async def create_many(
         self,
-        session: AsyncSession | async_scoped_session[AsyncSession],
-        data: Sequence[Dict[str, Any] | SchemaT],
+        session: SessionType,
+        data: Sequence[dict[str, Any] | SchemaT],
         *,
-        schema_type: Type[SchemaT] | None = None,
+        schema_type: type[SchemaT] | None = None,
     ) -> Sequence[SchemaT]:
         """Create multiple records.
 
@@ -208,11 +231,11 @@ class SQLAlchemyWriteService(BaseSQLAlchemyService[SQLAlchemyModelT]):  # type: 
 
     async def update(
         self,
-        session: AsyncSession | async_scoped_session[AsyncSession],
+        session: SessionType,
         item_id: Any,
-        data: Dict[str, Any] | SchemaT,
+        data: dict[str, Any] | SchemaT,
         *,
-        schema_type: Type[SchemaT] | None = None,
+        schema_type: type[SchemaT] | None = None,
     ) -> SchemaT | SQLAlchemyModelT | None:
         """Update an existing record.
 
@@ -247,11 +270,11 @@ class SQLAlchemyWriteService(BaseSQLAlchemyService[SQLAlchemyModelT]):  # type: 
     @transactional
     async def upsert(
         self,
-        session: AsyncSession | async_scoped_session[AsyncSession],
-        data: Dict[str, Any],
+        session: SessionType,
+        data: dict[str, Any],
         *,
         match_fields: list[str] | str | None = None,
-        schema_type: Type[SchemaT] | None = None,
+        schema_type: type[SchemaT] | None = None,
         **kwargs: Any,
     ) -> tuple[SchemaT | SQLAlchemyModelT, bool]:
         """Create or update a record.
@@ -274,9 +297,9 @@ class SQLAlchemyWriteService(BaseSQLAlchemyService[SQLAlchemyModelT]):  # type: 
                 schema_type=UserSchema
             )
             if created:
-                print("Created new user")
+                logger.info("Created new user")
             else:
-                print("Updated existing user")
+                logger.info("Updated existing user")
         """
         result, was_created = await self.repository.get_or_upsert(
             session, match_fields=match_fields, upsert=True, **data, **kwargs
@@ -288,7 +311,7 @@ class SQLAlchemyWriteService(BaseSQLAlchemyService[SQLAlchemyModelT]):  # type: 
 
     async def delete(
         self,
-        session: AsyncSession | async_scoped_session[AsyncSession],
+        session: SessionType,
         item_id: Any,
     ) -> SQLAlchemyModelT | None:
         """Delete a record by ID.
@@ -303,13 +326,13 @@ class SQLAlchemyWriteService(BaseSQLAlchemyService[SQLAlchemyModelT]):  # type: 
         Example:
             deleted_user = await service.delete(session, item_id=1)
             if deleted_user:
-                print(f"Deleted user: {deleted_user.name}")
+                logger.info("Deleted user: {name}", name=deleted_user.name)
         """
         return await self.repository.delete(session, item_id)
 
     async def delete_where(
         self,
-        session: AsyncSession | async_scoped_session[AsyncSession],
+        session: SessionType,
         *filters: StatementFilter | ColumnElement[bool],
         **kwargs: Any,
     ) -> Sequence[SQLAlchemyModelT] | None:
@@ -330,7 +353,7 @@ class SQLAlchemyWriteService(BaseSQLAlchemyService[SQLAlchemyModelT]):  # type: 
                 User.is_active == False,
                 User.last_login < datetime.now() - timedelta(days=365)
             )
-            print(f"Deleted {len(deleted)} inactive users")
+            logger.info("Deleted {count} inactive users", count=len(deleted))
         """
         return await self.repository.delete_where(session, *filters, **kwargs)
 

@@ -7,7 +7,7 @@ from datetime import datetime
 
 import pytest_asyncio
 
-from apps.core.database.sql.filters import ComparisonFilter
+from apps.core.database.filters import ComparisonFilter
 from apps.core.schemas.base import BaseObjectSchema
 from apps.core.services.base import SQLAlchemyService
 from tests.integration._models import Widget, WidgetRepository

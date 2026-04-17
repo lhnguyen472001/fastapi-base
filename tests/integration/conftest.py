@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 import pytest_asyncio
@@ -15,10 +14,13 @@ from sqlalchemy.ext.asyncio import (
 )
 from testcontainers.postgres import PostgresContainer
 
-from apps.core.database.sql.registry import orm_registry
+from apps.core.database.registry import orm_registry
 
 # Importing the models registers them with the shared metadata.
 from tests.integration import _models  # noqa: F401
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 
 @pytest.fixture(scope="session")
@@ -35,7 +37,7 @@ def postgres_container() -> PostgresContainer:
 @pytest_asyncio.fixture(scope="session")
 async def engine(
     postgres_container: PostgresContainer,
-) -> AsyncGenerator[AsyncEngine, None]:
+) -> AsyncGenerator[AsyncEngine]:
     """Create an async engine bound to the test container."""
     url = postgres_container.get_connection_url()
     eng = create_async_engine(url, future=True)
@@ -52,7 +54,7 @@ async def engine(
 
 
 @pytest_asyncio.fixture
-async def session(engine: AsyncEngine) -> AsyncGenerator[AsyncSession, None]:
+async def session(engine: AsyncEngine) -> AsyncGenerator[AsyncSession]:
     """Per-test session. Truncates test tables after each test for isolation."""
     factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with factory() as sess:
@@ -63,9 +65,7 @@ async def session(engine: AsyncEngine) -> AsyncGenerator[AsyncSession, None]:
     from sqlalchemy import text
 
     async with engine.begin() as conn:
-        await conn.execute(
-            text("TRUNCATE _test_widgets, _test_soft_widgets RESTART IDENTITY CASCADE")
-        )
+        await conn.execute(text("TRUNCATE _test_widgets, _test_soft_widgets RESTART IDENTITY CASCADE"))
 
 
 @pytest.fixture
@@ -82,5 +82,5 @@ def soft_widget_repo():
     return SoftWidgetRepository()
 
 
-__all__ = ["postgres_container", "engine", "session", "widget_repo", "soft_widget_repo"]
+__all__ = ["engine", "postgres_container", "session", "soft_widget_repo", "widget_repo"]
 _ = cast  # silence unused import warnings if any

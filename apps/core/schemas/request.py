@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 
 from fastapi import Query
 from pydantic import Field
@@ -10,7 +10,7 @@ class RequestObjectSchema(BaseObjectSchema):
     """Base schema for all request objects."""
 
     @classmethod
-    def collect_alias(cls) -> Dict[str, Any]:
+    def collect_alias(cls) -> dict[str, Any]:
         """Collect the alias for the schema."""
         collection = {}
         for f_name, f_obj in cls.model_fields.items():
@@ -33,5 +33,8 @@ class OrderByRequestSchema(RequestObjectSchema):
     """Schema for ordering requests."""
 
     orders: list[str] | None = Field(
-        Query(default_factory=list, description="Order by fields with format: field[asc] or field[desc]")
+        Query(
+            default_factory=list,
+            description="Order by fields with format: field[asc] or field[desc]",
+        )
     )

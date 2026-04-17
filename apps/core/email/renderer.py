@@ -10,10 +10,12 @@ The :class:`Environment` enables HTML autoescaping so user-supplied values
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from jinja2 import Environment, FileSystemLoader, TemplateNotFound, select_autoescape
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class EmailRenderer:
@@ -60,9 +62,6 @@ class EmailRenderer:
             plain = self._env.get_template(f"{name}.txt").render(**context)
             html = self._env.get_template(f"{name}.html").render(**context)
         except TemplateNotFound as exc:
-            msg = (
-                f"Email template '{name}' is missing one of '{name}.txt' / "
-                f"'{name}.html'. Cause: {exc}"
-            )
+            msg = f"Email template '{name}' is missing one of '{name}.txt' / '{name}.html'. Cause: {exc}"
             raise TemplateNotFound(msg) from exc
         return plain, html

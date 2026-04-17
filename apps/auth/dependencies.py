@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from dependency_injector.wiring import Provide, inject
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.auth.containers import AuthContainer
 from apps.auth.exceptions import InvalidTokenError
-from apps.auth.services import AuthService
-from apps.core.database.sql.session import session_factory
-from apps.user.models import User
+from apps.core.database.session import session_factory
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from apps.auth.services import AuthService
+    from apps.user.models import User
 
 bearer_scheme = HTTPBearer(auto_error=False, description="Bearer JWT access token")
 
@@ -31,6 +36,4 @@ async def get_current_user(
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise InvalidTokenError(message="Missing or malformed Authorization header.")
 
-    return await auth_service.get_user_from_access_token(
-        session, token=credentials.credentials
-    )
+    return await auth_service.get_user_from_access_token(session, token=credentials.credentials)

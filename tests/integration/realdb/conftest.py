@@ -11,7 +11,7 @@ database stays clean across runs.
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING
 
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
@@ -20,9 +20,12 @@ from apps.auth import models as _auth_models  # noqa: F401  (registers RefreshTo
 from apps.settings import app_settings
 from apps.user import models as _user_models  # noqa: F401
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
 
 @pytest_asyncio.fixture(scope="session")
-async def real_engine() -> AsyncGenerator[AsyncEngine, None]:
+async def real_engine() -> AsyncGenerator[AsyncEngine]:
     """Async engine pointing to the live compose Postgres."""
     url = app_settings.db.database_uri.render_as_string(hide_password=False)
     eng = create_async_engine(url, future=True)
@@ -33,7 +36,7 @@ async def real_engine() -> AsyncGenerator[AsyncEngine, None]:
 
 
 @pytest_asyncio.fixture
-async def real_session(real_engine: AsyncEngine) -> AsyncGenerator[AsyncSession, None]:
+async def real_session(real_engine: AsyncEngine) -> AsyncGenerator[AsyncSession]:
     """Open a session bound to a savepoint that is always rolled back."""
     connection = await real_engine.connect()
     transaction = await connection.begin()

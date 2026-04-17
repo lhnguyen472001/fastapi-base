@@ -21,9 +21,7 @@ from apps.core.services.utils import ResultConverter
 
 
 class _DummyModel:
-    def __init__(
-        self, id: uuid.UUID | None = None, name: str = "x", value: int = 0
-    ) -> None:
+    def __init__(self, id: uuid.UUID | None = None, name: str = "x", value: int = 0) -> None:
         self.id = id or uuid.uuid4()
         self.name = name
         self.value = value
@@ -96,10 +94,7 @@ async def test_get_by_id_returns_none_when_repo_returns_none(repo, session) -> N
     repo.get_one_by_id.return_value = None
     svc = SQLAlchemyReadService(repository=repo)
 
-    assert (
-        await svc.get_by_id(session, item_id=uuid.uuid4(), schema_type=_DummySchema)
-        is None
-    )
+    assert await svc.get_by_id(session, item_id=uuid.uuid4(), schema_type=_DummySchema) is None
 
 
 async def test_list_items_with_no_filters_passes_empty_list(repo, session) -> None:
@@ -152,9 +147,7 @@ async def test_create_calls_repository_add_and_converts(repo, session) -> None:
     repo.add.return_value = _DummyModel(name="new", value=3)
     svc = SQLAlchemyWriteService(repository=repo)
 
-    out = await svc.create(
-        session, data={"name": "new", "value": 3}, schema_type=_DummySchema
-    )
+    out = await svc.create(session, data={"name": "new", "value": 3}, schema_type=_DummySchema)
 
     repo.add.assert_awaited_once()
     assert isinstance(out, _DummySchema)
@@ -190,9 +183,7 @@ async def test_update_with_schema_dict_dump(repo, session) -> None:
     repo.update.return_value = model
     svc = SQLAlchemyWriteService(repository=repo)
 
-    out = await svc.update(
-        session, item_id=model.id, data={"name": "updated"}, schema_type=_DummySchema
-    )
+    out = await svc.update(session, item_id=model.id, data={"name": "updated"}, schema_type=_DummySchema)
 
     assert isinstance(out, _DummySchema)
     assert out.name == "updated"
@@ -282,7 +273,7 @@ def test_result_converter_bulk_to_schema() -> None:
 
 
 def test_result_converter_paginated_response() -> None:
-    from apps.core.database.sql.filters import LimitOffsetPaginationFilter
+    from apps.core.database.filters import LimitOffsetPaginationFilter
     from apps.core.schemas.response import PaginatedResponse
 
     rc = ResultConverter()

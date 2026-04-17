@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from apps.core.database.sql.filters import (
+from apps.core.database.filters import (
     ComparisonFilter,
     LimitOffsetPaginationFilter,
     OrderBy,
@@ -105,9 +105,7 @@ async def test_update_user(real_session, user_repo) -> None:
     user = await user_repo.add(real_session, _user_payload(suffix), expunge=False)
     await real_session.flush()
 
-    updated = await user_repo.update(
-        real_session, item_id=user.id, data={"is_active": False}
-    )
+    updated = await user_repo.update(real_session, item_id=user.id, data={"is_active": False})
 
     assert updated is not None
     assert updated.is_active is False
@@ -120,17 +118,13 @@ async def test_get_or_upsert_inserts_then_updates(real_session, user_repo) -> No
     suffix = uuid.uuid4().hex[:8]
     payload = _user_payload(suffix)
 
-    obj1, created1 = await user_repo.get_or_upsert(
-        real_session, match_fields="email", **payload
-    )
+    obj1, created1 = await user_repo.get_or_upsert(real_session, match_fields="email", **payload)
     await real_session.flush()
     assert created1 is True
     assert obj1.email == payload["email"]
 
     payload["hashed_password"] = "y" * 60
-    obj2, created2 = await user_repo.get_or_upsert(
-        real_session, match_fields="email", upsert=True, **payload
-    )
+    obj2, created2 = await user_repo.get_or_upsert(real_session, match_fields="email", upsert=True, **payload)
     await real_session.flush()
 
     assert created2 is False

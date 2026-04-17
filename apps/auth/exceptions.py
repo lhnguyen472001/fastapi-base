@@ -18,6 +18,9 @@ class AuthErrorCodes(enum.StrEnum):
     AUTH008 = "AUTH008"  # 2FA code invalid
     AUTH009 = "AUTH009"  # OAuth provider error
     AUTH010 = "AUTH010"  # 2FA not enabled (when trying to disable)
+    AUTH011 = "AUTH011"  # OAuth state token expired
+    AUTH012 = "AUTH012"  # OAuth state token invalid or subject mismatch
+    AUTH013 = "AUTH013"  # OAuth provider reported the email as not verified
 
 
 class InvalidCredentialsError(UnauthorizedError):
@@ -107,4 +110,41 @@ class TwoFactorNotEnabledError(BadRequestError):
     code: str = AuthErrorCodes.AUTH010
 
     def __init__(self, *, message: str = "Two-factor authentication is not enabled.") -> None:
+        super().__init__(code=self.code, message=message)
+
+
+class OAuthStateExpiredError(UnauthorizedError):
+    """The signed OAuth state token is past its ``exp`` claim."""
+
+    code: str = AuthErrorCodes.AUTH011
+
+    def __init__(self, *, message: str = "OAuth state has expired.") -> None:
+        super().__init__(code=self.code, message=message)
+
+
+class OAuthStateInvalidError(UnauthorizedError):
+    """The OAuth state token failed signature/type/subject validation.
+
+    Used for every form of tampering: wrong signature, wrong token type,
+    or a subject claim that is not ``oauth_state``. Message is generic to
+    avoid leaking which check failed.
+    """
+
+    code: str = AuthErrorCodes.AUTH012
+
+    def __init__(self, *, message: str = "OAuth state is invalid.") -> None:
+        super().__init__(code=self.code, message=message)
+
+
+class OAuthEmailNotVerifiedError(BadRequestError):
+    """The OAuth provider returned ``email_verified=false``.
+
+    We refuse to create/link accounts from unverified provider emails
+    because otherwise an attacker who controls an SMTP relay could take
+    over an account that was about to be registered with that address.
+    """
+
+    code: str = AuthErrorCodes.AUTH013
+
+    def __init__(self, *, message: str = "OAuth account email is not verified.") -> None:
         super().__init__(code=self.code, message=message)

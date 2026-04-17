@@ -68,7 +68,8 @@ async def get_user(
 - NEVER manually call `session.commit()` in repository methods — let the service/decorator handle it
 
 ```python
-from apps.core.database.sql.transactional import Transactional
+from apps.core.database.transactional import Transactional
+
 
 class UserService(SQLAlchemyService[User]):
     @Transactional()
@@ -85,7 +86,7 @@ class UserService(SQLAlchemyService[User]):
 - Use `text()` only for complex raw SQL that cannot be expressed with ORM
 
 ```python
-from apps.core.database.sql.filters import (
+from apps.core.database.filters import (
     SearchFilter,
     LimitOffsetFilter,
     OrderByFilter,
@@ -109,7 +110,8 @@ results, total = await repository.list_and_count(session, statement_filters=filt
 
 ```python
 from sqlalchemy.orm import Mapped, mapped_column
-from apps.core.database.sql.model.base import UUIDAuditBase
+from apps.core.database.model.base import UUIDAuditBase
+
 
 class User(UUIDAuditBase):
     username: Mapped[str] = mapped_column(unique=True, index=True)

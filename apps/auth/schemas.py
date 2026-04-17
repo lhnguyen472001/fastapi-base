@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import uuid
 from typing import Literal
-
+import uuid
 from pydantic import EmailStr, Field
 
 from apps.core.schemas.request import RequestObjectSchema
 from apps.core.schemas.response import ResponseObjectSchema
 from apps.user.schemas import CreateUserRequest
-
-# --------------------------------- requests ---------------------------------
 
 
 class RegisterRequest(CreateUserRequest):

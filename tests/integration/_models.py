@@ -5,9 +5,9 @@ from __future__ import annotations
 from sqlalchemy import String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from apps.core.database.sql.model.base import UUIDAuditBase
-from apps.core.database.sql.model.mixins import HasSoftDeletedMixin
-from apps.core.database.sql.repository.base import BaseSQLAlchemyRepository
+from apps.core.database.model.base import UUIDAuditBase
+from apps.core.database.model import HasSoftDeletedMixin
+from apps.core.database.repository.base import BaseSQLAlchemyRepository
 
 
 class Widget(UUIDAuditBase):

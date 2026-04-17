@@ -118,9 +118,7 @@ async def test_list_users_paginates_and_counts(real_session, user_service) -> No
         await user_service.create(real_session, data=_create_request(f"{suffix}_{i}"))
     await real_session.flush()
 
-    items, total = await user_service.list_users(
-        real_session, params=ListUsersRequest(limit=3, offset=0)
-    )
+    items, total = await user_service.list_users(real_session, params=ListUsersRequest(limit=3, offset=0))
 
     assert total >= 5
     assert len(items) == 3
@@ -134,9 +132,7 @@ async def test_list_users_filters_by_is_active(real_session, user_service) -> No
     active.is_active = True
     await real_session.flush()
 
-    items, _ = await user_service.list_users(
-        real_session, params=ListUsersRequest(limit=100, offset=0, is_active=True)
-    )
+    items, _ = await user_service.list_users(real_session, params=ListUsersRequest(limit=100, offset=0, is_active=True))
     ids = {u.id for u in items}
     assert active.id in ids
     assert inactive.id not in ids
@@ -167,9 +163,7 @@ async def test_update_rehashes_password(real_session, user_service) -> None:
     suffix = uuid.uuid4().hex[:8]
     old_plain = "OldPassword1!"
     new_plain = "NewPassword2@"
-    created = await user_service.create(
-        real_session, data=_create_request(suffix, password=old_plain)
-    )
+    created = await user_service.create(real_session, data=_create_request(suffix, password=old_plain))
     await real_session.flush()
 
     updated = await user_service.update(
@@ -183,9 +177,7 @@ async def test_update_rehashes_password(real_session, user_service) -> None:
     assert verify_password(old_plain, updated.hashed_password) is False
 
 
-async def test_update_rejects_email_conflict_with_other_user(
-    real_session, user_service
-) -> None:
+async def test_update_rejects_email_conflict_with_other_user(real_session, user_service) -> None:
     suffix = uuid.uuid4().hex[:8]
     user_a = await user_service.create(real_session, data=_create_request(f"{suffix}_a"))
     user_b = await user_service.create(real_session, data=_create_request(f"{suffix}_b"))
@@ -235,16 +227,12 @@ async def test_soft_delete_sets_deleted_at(real_session, user_service) -> None:
 
     assert deleted.deleted_at is not None
 
-    raw = await user_service.repository.find_by_id(
-        real_session, user_id=created.id, include_deleted=True
-    )
+    raw = await user_service.repository.find_by_id(real_session, user_id=created.id, include_deleted=True)
     assert raw is not None
     assert raw.deleted_at is not None
 
 
-async def test_soft_delete_idempotent_raises_on_second_call(
-    real_session, user_service
-) -> None:
+async def test_soft_delete_idempotent_raises_on_second_call(real_session, user_service) -> None:
     suffix = uuid.uuid4().hex[:8]
     created = await user_service.create(real_session, data=_create_request(suffix))
     await real_session.flush()
@@ -269,20 +257,14 @@ async def test_get_by_email_or_username_returns_user(real_session, user_service)
     created = await user_service.create(real_session, data=_create_request(suffix))
     await real_session.flush()
 
-    by_email = await user_service.get_by_email_or_username(
-        real_session, email=created.email
-    )
-    by_username = await user_service.get_by_email_or_username(
-        real_session, username=created.username
-    )
+    by_email = await user_service.get_by_email_or_username(real_session, email=created.email)
+    by_username = await user_service.get_by_email_or_username(real_session, username=created.username)
 
     assert by_email is not None and by_email.id == created.id
     assert by_username is not None and by_username.id == created.id
 
 
-async def test_get_by_email_or_username_excludes_soft_deleted(
-    real_session, user_service
-) -> None:
+async def test_get_by_email_or_username_excludes_soft_deleted(real_session, user_service) -> None:
     suffix = uuid.uuid4().hex[:8]
     created = await user_service.create(real_session, data=_create_request(suffix))
     await real_session.flush()
@@ -290,7 +272,5 @@ async def test_get_by_email_or_username_excludes_soft_deleted(
     await user_service.soft_delete(real_session, user_id=created.id)
     await real_session.flush()
 
-    found = await user_service.get_by_email_or_username(
-        real_session, email=created.email
-    )
+    found = await user_service.get_by_email_or_username(real_session, email=created.email)
     assert found is None

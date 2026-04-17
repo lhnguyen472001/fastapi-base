@@ -9,7 +9,8 @@ Use decorators and middleware to separate cross-cutting concerns: Logging, Trans
 ## @Transactional Decorator Pattern
 
 ```python
-from apps.core.database.sql.transactional import Transactional
+from apps.core.database.transactional import Transactional
+
 
 class OrderService(SQLAlchemyService[Order]):
     @Transactional()

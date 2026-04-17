@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING
 from sqlalchemy import ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from apps.core.database.sql.model.base import UUIDAuditBase
-from apps.core.database.sql.types import DateTimeUTC
+from apps.core.database.model.base import UUIDAuditBase
+from apps.core.database.types import DateTimeUTC
 
 if TYPE_CHECKING:
     from apps.user.models import User
@@ -41,7 +41,7 @@ class RefreshToken(UUIDAuditBase):
     __table_args__ = (Index("ix_refresh_tokens_user_id_revoked_at", "user_id", "revoked_at"),)
 
 
-class OtpPurpose(enum.StrEnum):
+class OTPPurpose(enum.StrEnum):
     """Reason an OTP was issued."""
 
     EMAIL_VERIFICATION = "email_verification"

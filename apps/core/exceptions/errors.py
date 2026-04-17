@@ -27,56 +27,18 @@ class BadRequestError(BackendError):
         super().__init__(status=status, data=data, message=message, background_task=background_task)
 
 
-class ConflictError(BackendError):
-    """Conflict Error."""
-
-    code: str = ResponseCodes.API001
-    status_code: int = http_status.HTTP_409_CONFLICT
-
-    def __init__(
-        self,
-        *,
-        code: str = ResponseCodes.API001,
-        data: dict[str, Any] | None = None,
-        message: str = "Conflict.",
-        status: JsonResponseStatuses = JsonResponseStatuses.FAIL,
-        background_task: BackgroundTask | None = None,
-    ) -> None:
-        self.code = code
-        super().__init__(status=status, data=data, message=message, background_task=background_task)
-
-
 class UnauthorizedError(BackendError):
     """Unauthorized Error."""
 
-    code: str = ResponseCodes.API001
+    code: str = ResponseCodes.API004
     status_code: int = http_status.HTTP_401_UNAUTHORIZED
 
     def __init__(
         self,
         *,
-        code: str = ResponseCodes.API001,
+        code: str = ResponseCodes.API004,
         data: dict[str, Any] | None = None,
         message: str = "Unauthorized.",
-        status: JsonResponseStatuses = JsonResponseStatuses.FAIL,
-        background_task: BackgroundTask | None = None,
-    ) -> None:
-        self.code = code
-        super().__init__(status=status, data=data, message=message, background_task=background_task)
-
-
-class NotFoundError(BackendError):
-    """Not Found Error."""
-
-    code: str = ResponseCodes.API001
-    status_code: int = http_status.HTTP_404_NOT_FOUND
-
-    def __init__(
-        self,
-        *,
-        code: str = ResponseCodes.API001,
-        data: dict[str, Any] | None = None,
-        message: str = "Not Found.",
         status: JsonResponseStatuses = JsonResponseStatuses.FAIL,
         background_task: BackgroundTask | None = None,
     ) -> None:
@@ -87,15 +49,53 @@ class NotFoundError(BackendError):
 class ForbiddenError(BackendError):
     """Forbidden Error."""
 
-    code: str = ResponseCodes.API001
+    code: str = ResponseCodes.API005
     status_code: int = http_status.HTTP_403_FORBIDDEN
 
     def __init__(
         self,
         *,
-        code: str = ResponseCodes.API001,
+        code: str = ResponseCodes.API005,
         data: dict[str, Any] | None = None,
         message: str = "Forbidden.",
+        status: JsonResponseStatuses = JsonResponseStatuses.FAIL,
+        background_task: BackgroundTask | None = None,
+    ) -> None:
+        self.code = code
+        super().__init__(status=status, data=data, message=message, background_task=background_task)
+
+
+class NotFoundError(BackendError):
+    """Not Found Error."""
+
+    code: str = ResponseCodes.API006
+    status_code: int = http_status.HTTP_404_NOT_FOUND
+
+    def __init__(
+        self,
+        *,
+        code: str = ResponseCodes.API006,
+        data: dict[str, Any] | None = None,
+        message: str = "Not Found.",
+        status: JsonResponseStatuses = JsonResponseStatuses.FAIL,
+        background_task: BackgroundTask | None = None,
+    ) -> None:
+        self.code = code
+        super().__init__(status=status, data=data, message=message, background_task=background_task)
+
+
+class ConflictError(BackendError):
+    """Conflict Error."""
+
+    code: str = ResponseCodes.API007
+    status_code: int = http_status.HTTP_409_CONFLICT
+
+    def __init__(
+        self,
+        *,
+        code: str = ResponseCodes.API007,
+        data: dict[str, Any] | None = None,
+        message: str = "Conflict.",
         status: JsonResponseStatuses = JsonResponseStatuses.FAIL,
         background_task: BackgroundTask | None = None,
     ) -> None:

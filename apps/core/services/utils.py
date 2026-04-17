@@ -1,14 +1,14 @@
 from collections.abc import Sequence
-from typing import Any, ClassVar, Dict, List, Type, TypeAlias, overload
+from typing import Any, ClassVar, overload
 
 from pydantic import TypeAdapter, ValidationError
 from sqlalchemy.engine import Row
 
-from apps.core.database.sql.filters import LimitOffsetPaginationFilter
-from apps.core.database.sql.types import RowMappingT, SQLAlchemyModelT
+from apps.core.database.filters import LimitOffsetPaginationFilter
+from apps.core.database.types import RowMappingT, SQLAlchemyModelT
 from apps.core.schemas import BaseObjectSchema, PaginatedResponse, SchemaT
 
-DataT: TypeAlias = SQLAlchemyModelT | RowMappingT | Row[Any] | Dict[str, Any]
+type DataT = SQLAlchemyModelT | RowMappingT | Row[Any] | dict[str, Any]
 
 
 class ResultConverter:
@@ -24,9 +24,18 @@ class ResultConverter:
     """
 
     # Cache TypeAdapter instances for reuse across conversions
-    _adapter_cache: ClassVar[Dict[Type[BaseObjectSchema], TypeAdapter[Any]]] = {}
+    _adapter_cache: ClassVar[dict[type[BaseObjectSchema], TypeAdapter[Any]]] = {}
 
-    def _convert_single(self, data: DataT, schema_type: Type[SchemaT]) -> SchemaT:
+    @classmethod
+    def _get_adapter(cls, schema_type: type[SchemaT]) -> TypeAdapter[SchemaT]:
+        """Return a cached TypeAdapter for the given schema type."""
+        adapter = cls._adapter_cache.get(schema_type)
+        if adapter is None:
+            adapter = TypeAdapter(schema_type)
+            cls._adapter_cache[schema_type] = adapter
+        return adapter
+
+    def _convert_single(self, data: DataT, schema_type: type[SchemaT]) -> SchemaT:
         """Convert single item with enhanced error context.
 
         Args:
@@ -40,14 +49,13 @@ class ResultConverter:
             ValueError: With preserved ValidationError details.
         """
         try:
-            type_adapter = TypeAdapter(schema_type)
-            return type_adapter.validate_python(data)
+            return self._get_adapter(schema_type).validate_python(data)
         except ValidationError as e:
             data_type = type(data).__name__
             error_details = "\n".join(f"  - {err['loc']}: {err['msg']}" for err in e.errors())
             raise ValueError(f"Failed to convert {data_type} to {schema_type.__name__}:\n{error_details}") from e
 
-    def _convert_bulk(self, data: Sequence[DataT], schema_type: Type[SchemaT]) -> list[SchemaT]:
+    def _convert_bulk(self, data: Sequence[DataT], schema_type: type[SchemaT]) -> list[SchemaT]:
         """Convert sequence using optimized bulk validation.
 
         Uses TypeAdapter for ~2-3x performance improvement over loop-based validation.
@@ -67,17 +75,15 @@ class ResultConverter:
         if not data:
             return []
 
-        # Try optimized bulk validation first
         try:
-            type_adapter = TypeAdapter(List[schema_type])  # type: ignore[valid-type]
-            return type_adapter.validate_python(data)
+            list_adapter = TypeAdapter(list[schema_type])  # type: ignore[valid-type]
+            return list_adapter.validate_python(data)
         except ValidationError:
-            # Bulk validation failed - fallback to item-by-item for precise error location
             items = []
-            type_adapter = TypeAdapter(schema_type)
+            adapter = self._get_adapter(schema_type)
             for idx, item in enumerate(data):
                 try:
-                    items.append(type_adapter.validate_python(item))
+                    items.append(adapter.validate_python(item))
                 except ValidationError as e:
                     item_type = type(item).__name__
                     error_details = "\n".join(f"  - {err['loc']}: {err['msg']}" for err in e.errors())
@@ -91,7 +97,7 @@ class ResultConverter:
         self,
         data: DataT | None,
         *,
-        schema_type: Type[SchemaT] | None = None,
+        schema_type: type[SchemaT] | None = None,
     ) -> SchemaT | DataT | None: ...
 
     @overload
@@ -99,7 +105,7 @@ class ResultConverter:
         self,
         data: Sequence[DataT],
         *,
-        schema_type: Type[SchemaT] | None = None,
+        schema_type: type[SchemaT] | None = None,
     ) -> Sequence[SchemaT] | Sequence[DataT]: ...
 
     @overload
@@ -109,7 +115,7 @@ class ResultConverter:
         total: int,
         pagination_filter: LimitOffsetPaginationFilter | None = None,
         *,
-        schema_type: Type[SchemaT],
+        schema_type: type[SchemaT],
     ) -> PaginatedResponse[SchemaT]: ...
 
     def to_schema(
@@ -118,7 +124,7 @@ class ResultConverter:
         total: int | None = None,
         pagination_filter: LimitOffsetPaginationFilter | None = None,
         *,
-        schema_type: Type[SchemaT] | None = None,
+        schema_type: type[SchemaT] | None = None,
     ) -> SchemaT | Sequence[SchemaT] | PaginatedResponse[SchemaT] | DataT | Sequence[DataT] | None:
         """Convert database results to Pydantic schemas.
 

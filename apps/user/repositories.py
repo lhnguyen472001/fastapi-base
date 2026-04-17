@@ -4,7 +4,7 @@ from typing import Protocol
 from sqlalchemy import or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.core.database.sql.repository import BaseSQLAlchemyRepository
+from apps.core.database.repository import BaseSQLAlchemyRepository
 from apps.user.models import User
 
 
@@ -67,9 +67,7 @@ class UserRepository(BaseSQLAlchemyRepository[User]):
         if not conditions:
             return None
 
-        stmt = self.apply_filter(
-            self.statement, or_(*conditions), User.deleted_at.is_(None)
-        )
+        stmt = self.apply_filter(self.statement, or_(*conditions), User.deleted_at.is_(None))
         if exclude_id is not None:
             stmt = self.apply_filter(stmt, User.id != exclude_id)
 

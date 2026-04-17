@@ -1,6 +1,5 @@
 """Thin async Google OAuth2 client built on httpx."""
 
-
 from dataclasses import dataclass
 from urllib.parse import urlencode
 
@@ -74,7 +73,10 @@ class GoogleOAuthClient:
                     headers={"Accept": "application/json"},
                 )
             except httpx.HTTPError as e:
-                logger.error("GoogleOAuthClient - exchange_code - token request failed: {err}", err=e)
+                logger.error(
+                    "GoogleOAuthClient - exchange_code - token request failed: {err}",
+                    err=e,
+                )
                 raise OAuthProviderError(message="Failed to contact Google.") from e
 
             if token_response.status_code != 200:
@@ -96,7 +98,10 @@ class GoogleOAuthClient:
                     headers={"Authorization": f"Bearer {access_token}"},
                 )
             except httpx.HTTPError as e:
-                logger.error("GoogleOAuthClient - exchange_code - userinfo request failed: {err}", err=e)
+                logger.error(
+                    "GoogleOAuthClient - exchange_code - userinfo request failed: {err}",
+                    err=e,
+                )
                 raise OAuthProviderError(message="Failed to fetch Google userinfo.") from e
 
             if userinfo_response.status_code != 200:

@@ -14,3 +14,9 @@ keys/*.pem
 .vscode/
 .idea/
 *.swp
+
+# Local tooling
+.serena/
+
+# WIP notes
+blog-crm-backend-performance.md

@@ -5,17 +5,14 @@ import secrets
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_scoped_session
-
-from apps.core.database.sql.filters import LimitOffsetPaginationFilter
-from apps.core.security import hash_password
+from apps.core.database.filters import LimitOffsetPaginationFilter
+from apps.core.database.types import SessionType
+from apps.core.security import hash_password_async
 from apps.core.services.base import SQLAlchemyService
 from apps.user.exceptions import UserAlreadyExistsError, UserNotFoundError
 from apps.user.models import User
 from apps.user.repositories import UserRepository
 from apps.user.schemas import CreateUserRequest, ListUsersRequest, UpdateUserRequest
-
-SessionType = AsyncSession | async_scoped_session[AsyncSession]
 
 
 class UserService(SQLAlchemyService[User]):
@@ -50,9 +47,7 @@ class UserService(SQLAlchemyService[User]):
             UserAlreadyExistsError: If another user with the same email or username
                 already exists (excluding soft-deleted rows).
         """
-        existing = await self.repository.find_by_email_or_username(
-            session, email=data.email, username=data.username
-        )
+        existing = await self.repository.find_by_email_or_username(session, email=data.email, username=data.username)
         if existing is not None:
             raise UserAlreadyExistsError(
                 message=f"User with email '{data.email}' or username '{data.username}' already exists."
@@ -61,7 +56,7 @@ class UserService(SQLAlchemyService[User]):
         payload: dict = {
             "email": data.email,
             "username": data.username,
-            "hashed_password": hash_password(data.password),
+            "hashed_password": await hash_password_async(data.password),
             # New users start INACTIVE — must verify email via OTP first.
             "is_active": False,
         }
@@ -103,7 +98,6 @@ class UserService(SQLAlchemyService[User]):
                 existing.email_verified_at = datetime.datetime.now(datetime.UTC)
             if not existing.is_active:
                 existing.is_active = True
-            await session.flush()
             return existing
 
         # 2. Brand new user — derive a unique username from the hint.
@@ -113,7 +107,7 @@ class UserService(SQLAlchemyService[User]):
         payload: dict = {
             "email": email,
             "username": username,
-            "hashed_password": hash_password(random_password),
+            "hashed_password": await hash_password_async(random_password),
             "is_active": True,
             "email_verified_at": datetime.datetime.now(datetime.UTC),
             "google_sub": google_sub,
@@ -124,9 +118,7 @@ class UserService(SQLAlchemyService[User]):
         """Disambiguate a username by appending random suffixes on collision."""
         candidate = hint
         for _ in range(5):
-            collision = await self.repository.find_by_email_or_username(
-                session, username=candidate
-            )
+            collision = await self.repository.find_by_email_or_username(session, username=candidate)
             if collision is None:
                 return candidate
             candidate = f"{hint}_{secrets.token_hex(3)}"
@@ -152,9 +144,7 @@ class UserService(SQLAlchemyService[User]):
             raise UserNotFoundError(message=f"User with id '{user_id}' not found.")
         return user
 
-    async def list_users(
-        self, session: SessionType, *, params: ListUsersRequest
-    ) -> tuple[Sequence[User], int]:
+    async def list_users(self, session: SessionType, *, params: ListUsersRequest) -> tuple[Sequence[User], int]:
         """List active users with pagination and optional filters.
 
         Args:
@@ -174,9 +164,7 @@ class UserService(SQLAlchemyService[User]):
             **filter_kwargs,
         )
 
-    async def update(
-        self, session: SessionType, *, user_id: uuid.UUID, data: UpdateUserRequest
-    ) -> User:
+    async def update(self, session: SessionType, *, user_id: uuid.UUID, data: UpdateUserRequest) -> User:
         """Update an existing user.
 
         Args:
@@ -202,13 +190,11 @@ class UserService(SQLAlchemyService[User]):
                 exclude_id=user_id,
             )
             if conflict is not None:
-                raise UserAlreadyExistsError(
-                    message="Another user already uses this email or username."
-                )
+                raise UserAlreadyExistsError(message="Another user already uses this email or username.")
 
         update_payload = data.model_dump(exclude_unset=True)
         if "password" in update_payload:
-            update_payload["hashed_password"] = hash_password(update_payload.pop("password"))
+            update_payload["hashed_password"] = await hash_password_async(update_payload.pop("password"))
 
         updated = await self.repository.update(session, item_id=user_id, data=update_payload)
         if updated is None:
@@ -233,7 +219,6 @@ class UserService(SQLAlchemyService[User]):
         """
         user = await self.get_by_id(session, user_id=user_id)
         user.deleted_at = datetime.datetime.now(datetime.UTC)
-        await session.flush()
         return user
 
     async def get_by_email_or_username(
@@ -244,6 +229,4 @@ class UserService(SQLAlchemyService[User]):
         username: str | None = None,
     ) -> User | None:
         """Look up a user by email or username (used by the future auth module)."""
-        return await self.repository.find_by_email_or_username(
-            session, username=username, email=email
-        )
+        return await self.repository.find_by_email_or_username(session, username=username, email=email)

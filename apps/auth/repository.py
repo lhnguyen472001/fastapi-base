@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import datetime
-import uuid
 
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.auth.models import EmailVerification, OtpPurpose, RefreshToken
-from apps.core.database.sql.repository import BaseSQLAlchemyRepository
+from apps.auth.models import EmailVerification, OTPPurpose, RefreshToken
+from apps.core.database.repository import BaseSQLAlchemyRepository
+
+import uuid
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class RefreshTokenRepository(BaseSQLAlchemyRepository[RefreshToken]):
@@ -17,9 +19,7 @@ class RefreshTokenRepository(BaseSQLAlchemyRepository[RefreshToken]):
 
     model_type = RefreshToken
 
-    async def find_active_by_hash(
-        self, session: AsyncSession, *, token_hash: str
-    ) -> RefreshToken | None:
+    async def find_active_by_hash(self, session: AsyncSession, *, token_hash: str) -> RefreshToken | None:
         """Look up a refresh token by hash, filtering out revoked / expired rows.
 
         Returns ``None`` if the token does not exist, has been revoked, or
@@ -37,7 +37,10 @@ class RefreshTokenRepository(BaseSQLAlchemyRepository[RefreshToken]):
         return result.scalar_one_or_none()
 
     async def revoke_all_for_user(
-        self, session: AsyncSession, *, user_id: uuid.UUID
+        self,
+        session: AsyncSession,
+        *,
+        user_id: uuid.UUID,
     ) -> None:
         """Revoke every active refresh token for a user (logout-all)."""
         now = datetime.datetime.now(datetime.UTC)
@@ -60,7 +63,7 @@ class EmailVerificationRepository(BaseSQLAlchemyRepository[EmailVerification]):
         session: AsyncSession,
         *,
         user_id: uuid.UUID,
-        purpose: OtpPurpose = OtpPurpose.EMAIL_VERIFICATION,
+        purpose: OTPPurpose = OTPPurpose.EMAIL_VERIFICATION,
     ) -> EmailVerification | None:
         """Return the latest unused, unexpired OTP for the user, if any."""
         now = datetime.datetime.now(datetime.UTC)
@@ -81,7 +84,7 @@ class EmailVerificationRepository(BaseSQLAlchemyRepository[EmailVerification]):
         session: AsyncSession,
         *,
         user_id: uuid.UUID,
-        purpose: OtpPurpose = OtpPurpose.EMAIL_VERIFICATION,
+        purpose: OTPPurpose = OTPPurpose.EMAIL_VERIFICATION,
     ) -> None:
         """Mark all currently active OTPs for the user as used.
 

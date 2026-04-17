@@ -70,19 +70,20 @@ from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.core.database.sql.session import session_factory
+from apps.core.database.session import session_factory
 from apps.core.schemas.response import APIResponse, JsonResponseStatuses, PaginatedResponse, ResponseCodes
 from apps.user.containers import UserContainer
 from apps.user.schemas import UserResponse
 from apps.user.services import UserService
 
+
 # Single object response — @inject + Depends(Provide[...])
 @router.get("/{user_id}", response_model=APIResponse[UserResponse])
 @inject
 async def get_user(
-    user_id: uuid.UUID,
-    session: AsyncSession = Depends(session_factory),
-    user_service: UserService = Depends(Provide[UserContainer.user_service]),
+        user_id: uuid.UUID,
+        session: AsyncSession = Depends(session_factory),
+        user_service: UserService = Depends(Provide[UserContainer.user_service]),
 ) -> APIResponse[UserResponse]:
     user = await user_service.get_by_id(session, item_id=user_id)
     return APIResponse[UserResponse](
@@ -92,13 +93,14 @@ async def get_user(
         message="User retrieved successfully.",
     )
 
+
 # Paginated list response
 @router.get("", response_model=APIResponse[PaginatedResponse[UserResponse]])
 @inject
 async def list_users(
-    params: ListUsersRequest = Depends(),
-    session: AsyncSession = Depends(session_factory),
-    user_service: UserService = Depends(Provide[UserContainer.user_service]),
+        params: ListUsersRequest = Depends(),
+        session: AsyncSession = Depends(session_factory),
+        user_service: UserService = Depends(Provide[UserContainer.user_service]),
 ) -> APIResponse[PaginatedResponse[UserResponse]]:
     result = await user_service.list_items(session, filters=params)
     return APIResponse[PaginatedResponse[UserResponse]](

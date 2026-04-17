@@ -1,13 +1,14 @@
 """User model."""
-from typing import TYPE_CHECKING
+
 import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from apps.core.database.sql.model.base import UUIDAuditBase
-from apps.core.database.sql.model.mixins import HasSoftDeletedMixin
-from apps.core.database.sql.types import DateTimeUTC
+from apps.core.database.model.base import UUIDAuditBase
+from apps.core.database.model import HasSoftDeletedMixin
+from apps.core.database.types import DateTimeUTC
 
 if TYPE_CHECKING:
     from apps.auth.models import EmailVerification, RefreshToken
@@ -42,12 +43,12 @@ class User(UUIDAuditBase, HasSoftDeletedMixin):
     totp_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
     is_2fa_enabled: Mapped[bool] = mapped_column(default=False, nullable=False)
 
-    refresh_tokens: Mapped[list["RefreshToken"]] = relationship(  # noqa: F821
+    refresh_tokens: Mapped[list["RefreshToken"]] = relationship(
         "RefreshToken",
         back_populates="user",
-        lazy="selectin",
+        lazy="raise",
     )
-    email_verifications: Mapped[list["EmailVerification"]] = relationship(  # noqa: F821
+    email_verifications: Mapped[list["EmailVerification"]] = relationship(
         "EmailVerification",
         back_populates="user",
         cascade="all, delete-orphan",

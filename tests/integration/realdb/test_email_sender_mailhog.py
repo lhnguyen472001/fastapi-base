@@ -17,7 +17,13 @@ import pytest_asyncio
 from apps.auth.oauth import GoogleOAuthClient
 from apps.auth.repository import EmailVerificationRepository, RefreshTokenRepository
 from apps.auth.schemas import RegisterRequest
-from apps.auth.services import AuthService
+from apps.auth.services import (
+    AuthService,
+    EmailVerificationService,
+    OAuthService,
+    TokenService,
+    TwoFactorService,
+)
 from apps.core.email import EmailMessage, EmailRenderer, SmtpEmailSender
 from apps.settings import app_settings
 from apps.user.repositories import UserRepository
@@ -27,9 +33,7 @@ from tests.integration.realdb._mailhog import MailHogClient, is_reachable
 # `_decode_part` is a private classmethod we re-use in one assertion below.
 _decode_part = MailHogClient._decode_part
 
-pytestmark = pytest.mark.skipif(
-    not is_reachable(), reason="MailHog not reachable on localhost:8025"
-)
+pytestmark = pytest.mark.skipif(not is_reachable(), reason="MailHog not reachable on localhost:8025")
 
 
 @pytest_asyncio.fixture
@@ -57,18 +61,34 @@ def email_renderer() -> EmailRenderer:
 
 
 @pytest.fixture
-def auth_service_real_smtp(
-    smtp_sender: SmtpEmailSender, email_renderer: EmailRenderer
-) -> AuthService:
-    return AuthService(
-        user_service=UserService(repository=UserRepository()),
-        refresh_token_repository=RefreshTokenRepository(),
-        email_verification_repository=EmailVerificationRepository(),
+def auth_service_real_smtp(smtp_sender: SmtpEmailSender, email_renderer: EmailRenderer) -> AuthService:
+    user_service = UserService(repository=UserRepository())
+    refresh_token_repository = RefreshTokenRepository()
+    email_verification_repository = EmailVerificationRepository()
+    google_oauth_client = GoogleOAuthClient(client_id="test", client_secret="test", redirect_uri="http://test")
+
+    token_service = TokenService(
+        user_service=user_service,
+        refresh_token_repository=refresh_token_repository,
+    )
+    email_verification_service = EmailVerificationService(
+        user_service=user_service,
+        email_verification_repository=email_verification_repository,
         email_sender=smtp_sender,
         email_renderer=email_renderer,
-        google_oauth_client=GoogleOAuthClient(
-            client_id="test", client_secret="test", redirect_uri="http://test"
-        ),
+    )
+    two_factor_service = TwoFactorService()
+    oauth_service = OAuthService(
+        user_service=user_service,
+        google_oauth_client=google_oauth_client,
+    )
+
+    return AuthService(
+        user_service=user_service,
+        token_service=token_service,
+        email_verification_service=email_verification_service,
+        two_factor_service=two_factor_service,
+        oauth_service=oauth_service,
     )
 
 
@@ -111,9 +131,7 @@ async def test_smtp_sender_delivers_html_alternative(smtp_sender, mailhog) -> No
 async def test_smtp_sender_handles_unicode(smtp_sender, mailhog) -> None:
     recipient = f"unicode_{uuid.uuid4().hex[:8]}@example.com"
     body = "Unicode body — café · 日本語 · 🔑"
-    await smtp_sender.send(
-        EmailMessage(to=recipient, subject="Unicode test", body=body)
-    )
+    await smtp_sender.send(EmailMessage(to=recipient, subject="Unicode test", body=body))
 
     delivered = await mailhog.latest_for(recipient)
     assert delivered is not None
@@ -129,9 +147,7 @@ async def test_smtp_sender_handles_unicode(smtp_sender, mailhog) -> None:
 # ------------------------------ register flow ------------------------------
 
 
-async def test_register_flow_delivers_otp_via_mailhog(
-    real_session, auth_service_real_smtp, mailhog
-) -> None:
+async def test_register_flow_delivers_otp_via_mailhog(real_session, auth_service_real_smtp, mailhog) -> None:
     """Full register → MailHog → verify_email round-trip with real SMTP."""
     suffix = uuid.uuid4().hex[:8]
     payload = RegisterRequest(
@@ -147,9 +163,7 @@ async def test_register_flow_delivers_otp_via_mailhog(
     code = await mailhog.find_otp_for(payload.email)
     assert code is not None, "OTP code not found in MailHog inbox"
 
-    activated = await auth_service_real_smtp.verify_email(
-        real_session, email=payload.email, code=code
-    )
+    activated = await auth_service_real_smtp.verify_email(real_session, email=payload.email, code=code)
     await real_session.flush()
     assert activated.is_active is True
     assert activated.email_verified_at is not None
@@ -164,10 +178,10 @@ async def test_register_flow_delivers_otp_via_mailhog(
 async def test_register_swallows_smtp_failure(real_session, auth_service_real_smtp, monkeypatch) -> None:
     """A downed SMTP server must not abort registration."""
 
-    async def boom(_message):  # noqa: ANN001
+    async def boom(_message):
         raise RuntimeError("SMTP is down")
 
-    monkeypatch.setattr(auth_service_real_smtp.email_sender, "send", boom)
+    monkeypatch.setattr(auth_service_real_smtp.email_verification_service.email_sender, "send", boom)
 
     suffix = uuid.uuid4().hex[:8]
     payload = RegisterRequest(

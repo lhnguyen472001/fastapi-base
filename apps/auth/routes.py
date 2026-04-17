@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, Request, Response, status
-from fastapi.responses import RedirectResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.auth.containers import AuthContainer
 from apps.auth.dependencies import get_current_user
@@ -26,15 +26,19 @@ from apps.auth.schemas import (
     TwoFactorChallenge,
     VerifyEmailRequest,
 )
-from apps.auth.services import AuthService
-from apps.core.database.sql.session import session_factory
+from apps.core.database.session import session_factory
 from apps.core.schemas.response import (
     APIResponse,
     JsonResponseStatuses,
     ResponseCodes,
 )
-from apps.user.models import User
 from apps.user.schemas import UserResponse
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from apps.auth.services import AuthService
+    from apps.user.models import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -60,7 +64,6 @@ async def register(
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
 ) -> APIResponse[RegisterResponse]:
     user = await auth_service.register(session, data=data)
-    await session.commit()
     return APIResponse[RegisterResponse](
         code=ResponseCodes.API000,
         data=RegisterResponse(user_id=user.id),
@@ -77,7 +80,6 @@ async def verify_email(
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
 ) -> APIResponse[MessageResponse]:
     await auth_service.verify_email(session, email=data.email, code=data.code)
-    await session.commit()
     return APIResponse[MessageResponse](
         code=ResponseCodes.API000,
         data=MessageResponse(message="Email verified."),
@@ -98,7 +100,6 @@ async def resend_verification(
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
 ) -> APIResponse[MessageResponse]:
     await auth_service.resend_verification(session, email=data.email)
-    await session.commit()
     return APIResponse[MessageResponse](
         code=ResponseCodes.API000,
         data=MessageResponse(message="If the email exists, a new code has been sent."),
@@ -122,10 +123,7 @@ async def login(
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
 ) -> APIResponse[TokenPair | TwoFactorChallenge]:
     user_agent, ip_address = _client_metadata(request)
-    result = await auth_service.login(
-        session, data=data, user_agent=user_agent, ip_address=ip_address
-    )
-    await session.commit()
+    result = await auth_service.login(session, data=data, user_agent=user_agent, ip_address=ip_address)
     return APIResponse[TokenPair | TwoFactorChallenge](
         code=ResponseCodes.API000,
         data=result,
@@ -150,7 +148,6 @@ async def login_2fa(
         user_agent=user_agent,
         ip_address=ip_address,
     )
-    await session.commit()
     return APIResponse[TokenPair](
         code=ResponseCodes.API000,
         data=pair,
@@ -177,7 +174,6 @@ async def refresh(
         user_agent=user_agent,
         ip_address=ip_address,
     )
-    await session.commit()
     return APIResponse[TokenPair](
         code=ResponseCodes.API000,
         data=pair,
@@ -194,7 +190,6 @@ async def logout(
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
 ) -> Response:
     await auth_service.logout(session, raw_refresh_token=data.refresh_token)
-    await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -202,7 +197,9 @@ async def logout(
 
 
 @router.get("/me", response_model=APIResponse[UserResponse])
-async def me(current_user: User = Depends(get_current_user)) -> APIResponse[UserResponse]:
+async def me(
+    current_user: User = Depends(get_current_user),
+) -> APIResponse[UserResponse]:
     return APIResponse[UserResponse](
         code=ResponseCodes.API000,
         data=UserResponse.model_validate(current_user),
@@ -222,7 +219,6 @@ async def setup_2fa(
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
 ) -> APIResponse[Setup2FAResponse]:
     setup = await auth_service.setup_2fa(session, user=current_user)
-    await session.commit()
     return APIResponse[Setup2FAResponse](
         code=ResponseCodes.API000,
         data=setup,
@@ -240,7 +236,6 @@ async def enable_2fa(
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
 ) -> APIResponse[MessageResponse]:
     await auth_service.enable_2fa(session, user=current_user, totp_code=data.totp_code)
-    await session.commit()
     return APIResponse[MessageResponse](
         code=ResponseCodes.API000,
         data=MessageResponse(message="2FA enabled."),
@@ -263,7 +258,6 @@ async def disable_2fa(
         password=data.password,
         totp_code=data.totp_code,
     )
-    await session.commit()
     return APIResponse[MessageResponse](
         code=ResponseCodes.API000,
         data=MessageResponse(message="2FA disabled."),
@@ -313,14 +307,9 @@ async def google_callback(
         user_agent=user_agent,
         ip_address=ip_address,
     )
-    await session.commit()
     return APIResponse[TokenPair | TwoFactorChallenge](
         code=ResponseCodes.API000,
         data=result,
         status=JsonResponseStatuses.SUCCESS,
         message="Two-factor required." if isinstance(result, TwoFactorChallenge) else "Logged in via Google.",
     )
-
-
-# Avoid an unused-import warning when no route uses RedirectResponse directly.
-_ = RedirectResponse

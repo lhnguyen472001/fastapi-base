@@ -21,7 +21,6 @@ from apps.core.security import (
     hash_token,
 )
 
-
 # ------------------------------- access tokens ------------------------------
 
 

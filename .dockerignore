@@ -1,0 +1,44 @@
+# Version control
+.git
+.gitignore
+.github
+
+# Virtualenvs and caches
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Tests and dev artifacts
+tests
+htmlcov
+.coverage
+coverage.xml
+
+# Docs and notes
+*.md
+!README.md
+docs
+claudedocs
+
+# Local environment files & secrets
+.env
+.env.*
+keys
+
+# IDE
+.idea
+.vscode
+
+# Build / OS
+build
+dist
+*.egg-info
+.DS_Store
+
+# Docker
+Dockerfile*
+.dockerignore
+compose*.yml
