@@ -145,9 +145,10 @@ class EmailVerificationRepository(BaseSQLAlchemyRepository[EmailVerification]):
             .where(EmailVerification.expires_at > now)
             .where(EmailVerification.attempts < max_attempts)
             .values(attempts=EmailVerification.attempts + 1)
+            .returning(EmailVerification.attempts)
         )
-        result = await session.execute(stmt)
-        if result.rowcount == 0:
+        new_attempts = (await session.execute(stmt)).scalar_one_or_none()
+        if new_attempts is None:
             return False
-        await session.refresh(otp, attribute_names=["attempts"])
+        otp.attempts = new_attempts
         return True
