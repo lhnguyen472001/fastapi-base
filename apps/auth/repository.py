@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import datetime
+import uuid
 
 from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.auth.models import EmailVerification, OTPPurpose, RefreshToken
 from apps.core.database.repository import BaseSQLAlchemyRepository
-
-import uuid
-
-from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class RefreshTokenRepository(BaseSQLAlchemyRepository[RefreshToken]):
@@ -33,6 +31,17 @@ class RefreshTokenRepository(BaseSQLAlchemyRepository[RefreshToken]):
             .where(RefreshToken.revoked_at.is_(None))
             .where(RefreshToken.expires_at > now)
         )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def find_by_hash(self, session: AsyncSession, *, token_hash: str) -> RefreshToken | None:
+        """Look up a refresh token by hash regardless of revocation / expiry.
+
+        Used by :class:`TokenService.refresh` to disambiguate the "this
+        token was never issued" case (likely forgery) from "this token was
+        previously rotated" (likely reuse / theft of an old token).
+        """
+        stmt = select(RefreshToken).where(RefreshToken.token_hash == token_hash)
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -100,3 +109,45 @@ class EmailVerificationRepository(BaseSQLAlchemyRepository[EmailVerification]):
             .values(used_at=now)
         )
         await session.execute(stmt)
+
+    async def consume_attempt_atomic(
+        self,
+        session: AsyncSession,
+        *,
+        otp: EmailVerification,
+        max_attempts: int,
+    ) -> bool:
+        """Atomically bump ``otp.attempts`` iff the row is still consumable.
+
+        Performs a single ``UPDATE … SET attempts = attempts + 1 WHERE id = :id
+        AND used_at IS NULL AND expires_at > now AND attempts < :max`` round-
+        trip. Concurrent verify requests can no longer both observe
+        ``attempts < max`` and proceed — only one increment per attempts-slot
+        succeeds.
+
+        Args:
+            session: Database session.
+            otp: The previously-fetched OTP row to bump. On success the
+                in-memory ``attempts`` field is refreshed from the DB.
+            max_attempts: Inclusive upper bound from settings.
+
+        Returns:
+            ``True`` if the increment was applied (caller may now check the
+            code). ``False`` if the row was already exhausted, used, or
+            expired between the find and this call — caller must treat as
+            a generic OTP failure.
+        """
+        now = datetime.datetime.now(datetime.UTC)
+        stmt = (
+            update(EmailVerification)
+            .where(EmailVerification.id == otp.id)
+            .where(EmailVerification.used_at.is_(None))
+            .where(EmailVerification.expires_at > now)
+            .where(EmailVerification.attempts < max_attempts)
+            .values(attempts=EmailVerification.attempts + 1)
+        )
+        result = await session.execute(stmt)
+        if result.rowcount == 0:
+            return False
+        await session.refresh(otp, attribute_names=["attempts"])
+        return True

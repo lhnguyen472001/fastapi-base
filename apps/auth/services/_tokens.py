@@ -103,6 +103,15 @@ class TokenService:
         token_hash_value = hash_token(raw_refresh_token)
         existing = await self.refresh_token_repository.find_active_by_hash(session, token_hash=token_hash_value)
         if existing is None:
+            # Reuse-detection: the token was previously issued (signature is
+            # valid, but the active-by-hash lookup missed it) — meaning it
+            # was already rotated or expired. Treat as a likely theft of a
+            # rotated token and revoke every active descendant in the
+            # family so the attacker's freshly-rotated token also dies.
+            previous = await self.refresh_token_repository.find_by_hash(session, token_hash=token_hash_value)
+            if previous is not None:
+                await self.refresh_token_repository.revoke_all_for_user(session, user_id=previous.user_id)
+                await session.flush()
             raise RefreshTokenRevokedError()
 
         try:
