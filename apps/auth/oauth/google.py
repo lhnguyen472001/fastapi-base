@@ -8,6 +8,7 @@ from loguru import logger
 
 from apps.auth.constants import (
     GOOGLE_AUTHORIZE_ENDPOINT,
+    GOOGLE_OAUTH_HTTP_TIMEOUT_SECONDS,
     GOOGLE_OAUTH_SCOPES,
     GOOGLE_TOKEN_ENDPOINT,
     GOOGLE_USERINFO_ENDPOINT,
@@ -29,15 +30,29 @@ class GoogleUserInfo:
 class GoogleOAuthClient:
     """Async Google OAuth2 client.
 
-    Stateless aside from the configured client_id/secret/redirect_uri.
-    Each method call opens a fresh ``httpx.AsyncClient`` so the client is
-    safe to share across requests.
+    Holds a long-lived :class:`httpx.AsyncClient` so consecutive OAuth
+    callbacks reuse TCP+TLS connections instead of paying the handshake
+    every request. The client is created lazily on first use and torn
+    down explicitly via :meth:`aclose` from the FastAPI lifespan.
     """
 
     def __init__(self, *, client_id: str, client_secret: str, redirect_uri: str) -> None:
         self.client_id = client_id
         self.client_secret = client_secret
         self.redirect_uri = redirect_uri
+        self._client: httpx.AsyncClient | None = None
+
+    def _get_client(self) -> httpx.AsyncClient:
+        """Return the shared async client, creating it if needed."""
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=GOOGLE_OAUTH_HTTP_TIMEOUT_SECONDS)
+        return self._client
+
+    async def aclose(self) -> None:
+        """Close the underlying httpx client; safe to call when never used."""
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
 
     def build_authorize_url(self, *, state: str, code_challenge: str) -> str:
         """Build the Google consent screen URL.
@@ -72,65 +87,65 @@ class GoogleOAuthClient:
                 ``code_challenge`` sent to ``build_authorize_url``. Google
                 rejects the exchange if the values do not match.
         """
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            try:
-                token_response = await client.post(
-                    GOOGLE_TOKEN_ENDPOINT,
-                    data={
-                        "client_id": self.client_id,
-                        "client_secret": self.client_secret,
-                        "code": code,
-                        "code_verifier": code_verifier,
-                        "grant_type": "authorization_code",
-                        "redirect_uri": self.redirect_uri,
-                    },
-                    headers={"Accept": "application/json"},
-                )
-            except httpx.HTTPError as e:
-                logger.error(
-                    "GoogleOAuthClient - exchange_code - token request failed: {err}",
-                    err=e,
-                )
-                raise OAuthProviderError(message="Failed to contact Google.") from e
-
-            if token_response.status_code != 200:
-                logger.error(
-                    "GoogleOAuthClient - exchange_code - token endpoint returned {code}: {body}",
-                    code=token_response.status_code,
-                    body=token_response.text,
-                )
-                raise OAuthProviderError(message="Google rejected the authorization code.")
-
-            token_payload = token_response.json()
-            access_token = token_payload.get("access_token")
-            if not access_token:
-                raise OAuthProviderError(message="Google response missing access_token.")
-
-            try:
-                userinfo_response = await client.get(
-                    GOOGLE_USERINFO_ENDPOINT,
-                    headers={"Authorization": f"Bearer {access_token}"},
-                )
-            except httpx.HTTPError as e:
-                logger.error(
-                    "GoogleOAuthClient - exchange_code - userinfo request failed: {err}",
-                    err=e,
-                )
-                raise OAuthProviderError(message="Failed to fetch Google userinfo.") from e
-
-            if userinfo_response.status_code != 200:
-                raise OAuthProviderError(message="Google userinfo request failed.")
-
-            data = userinfo_response.json()
-            sub = data.get("sub")
-            email = data.get("email")
-            if not sub or not email:
-                raise OAuthProviderError(message="Google userinfo missing sub or email.")
-
-            return GoogleUserInfo(
-                sub=sub,
-                email=email,
-                email_verified=bool(data.get("email_verified", False)),
-                name=data.get("name"),
-                picture=data.get("picture"),
+        client = self._get_client()
+        try:
+            token_response = await client.post(
+                GOOGLE_TOKEN_ENDPOINT,
+                data={
+                    "client_id": self.client_id,
+                    "client_secret": self.client_secret,
+                    "code": code,
+                    "code_verifier": code_verifier,
+                    "grant_type": "authorization_code",
+                    "redirect_uri": self.redirect_uri,
+                },
+                headers={"Accept": "application/json"},
             )
+        except httpx.HTTPError as e:
+            logger.error(
+                "GoogleOAuthClient - exchange_code - token request failed: {err}",
+                err=e,
+            )
+            raise OAuthProviderError(message="Failed to contact Google.") from e
+
+        if token_response.status_code != 200:
+            logger.error(
+                "GoogleOAuthClient - exchange_code - token endpoint returned {code}: {body}",
+                code=token_response.status_code,
+                body=token_response.text,
+            )
+            raise OAuthProviderError(message="Google rejected the authorization code.")
+
+        token_payload = token_response.json()
+        access_token = token_payload.get("access_token")
+        if not access_token:
+            raise OAuthProviderError(message="Google response missing access_token.")
+
+        try:
+            userinfo_response = await client.get(
+                GOOGLE_USERINFO_ENDPOINT,
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+        except httpx.HTTPError as e:
+            logger.error(
+                "GoogleOAuthClient - exchange_code - userinfo request failed: {err}",
+                err=e,
+            )
+            raise OAuthProviderError(message="Failed to fetch Google userinfo.") from e
+
+        if userinfo_response.status_code != 200:
+            raise OAuthProviderError(message="Google userinfo request failed.")
+
+        data = userinfo_response.json()
+        sub = data.get("sub")
+        email = data.get("email")
+        if not sub or not email:
+            raise OAuthProviderError(message="Google userinfo missing sub or email.")
+
+        return GoogleUserInfo(
+            sub=sub,
+            email=email,
+            email_verified=bool(data.get("email_verified", False)),
+            name=data.get("name"),
+            picture=data.get("picture"),
+        )

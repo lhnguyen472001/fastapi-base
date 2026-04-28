@@ -21,3 +21,5 @@ GOOGLE_AUTHORIZE_ENDPOINT: Final[str] = "https://accounts.google.com/o/oauth2/v2
 GOOGLE_TOKEN_ENDPOINT: Final[str] = "https://oauth2.googleapis.com/token"  # noqa: S105 — public OAuth endpoint URL, not a credential
 GOOGLE_USERINFO_ENDPOINT: Final[str] = "https://www.googleapis.com/oauth2/v3/userinfo"
 GOOGLE_OAUTH_SCOPES: Final[str] = "openid email profile"
+
+GOOGLE_OAUTH_HTTP_TIMEOUT_SECONDS: Final[float] = 10.0

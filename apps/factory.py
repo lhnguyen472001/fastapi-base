@@ -18,6 +18,7 @@ from loguru import logger
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
+from apps.auth.containers import AuthContainer
 from apps.auth.routes import router as auth_router
 from apps.core.database.session import _async_session_factory
 from apps.core.exceptions.base import BackendError
@@ -87,6 +88,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     finally:
         logger.info("factory - lifespan - Shutting down")
         await rbac_container.shutdown_resources()  # type: ignore[func-returns-value]
+        await AuthContainer.google_oauth_client().aclose()
         await close_redis_client()
 
 

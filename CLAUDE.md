@@ -121,4 +121,5 @@ class UserContainer(containers.DeclarativeContainer):
 - **Exceptions:** Subclass `BackendError` with module-specific `StrEnum` error codes
 - **Schemas:** Never return ORM models directly from API endpoints — use Pydantic schemas
 - **Responses:** Wrap all API responses in `APIResponse[T]` with `ResponseCodes` and `JsonResponseStatuses`
+- **Constants:** Module-level literal constants (URLs, TTLs, timeouts, cookie names, key prefixes, bcrypt cost factors, etc.) MUST live in a per-module `constants.py` (e.g. `apps/auth/constants.py`, `apps/rbac/constants.py`) and be typed with `typing.Final[T]`. NEVER define constants inline in service / route / repository / model / DI-container files — even if only used within that module. Importers should `from apps.<module>.constants import NAME`. This keeps all tunables in one greppable place per module and makes test overrides trivial.
 - All rules in `.claude/rules/` apply to every coding task
