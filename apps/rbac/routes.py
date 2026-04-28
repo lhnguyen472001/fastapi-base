@@ -33,10 +33,10 @@ from apps.rbac.schemas import (
 from apps.rbac.services import RBACService
 from apps.user.models import User
 
-router = APIRouter(prefix="/rbac", tags=["rbac"])
+rbac_router = APIRouter(prefix="/rbac", tags=["rbac"])
 
 
-@router.post(
+@rbac_router.post(
     "/roles",
     response_model=APIResponse[RoleResponse],
     status_code=status.HTTP_201_CREATED,
@@ -59,7 +59,7 @@ async def create_role(
     return APIResponse[RoleResponse].success(data=RoleResponse.model_validate(role), message="Role created.")
 
 
-@router.post(
+@rbac_router.post(
     "/permissions",
     response_model=APIResponse[PermissionResponse],
     status_code=status.HTTP_201_CREATED,
@@ -85,7 +85,7 @@ async def create_permission(
     )
 
 
-@router.post(
+@rbac_router.post(
     "/groups",
     response_model=APIResponse[GroupResponse],
     status_code=status.HTTP_201_CREATED,
@@ -108,7 +108,7 @@ async def create_group(
     return APIResponse[GroupResponse].success(data=GroupResponse.model_validate(group), message="Group created.")
 
 
-@router.post("/role-permissions", status_code=status.HTTP_201_CREATED)
+@rbac_router.post("/role-permissions", status_code=status.HTTP_201_CREATED)
 @inject
 async def grant_permission(
     data: GrantPermissionRequest,
@@ -125,7 +125,7 @@ async def grant_permission(
     return APIResponse[None].success(data=None, message="Permission granted.")
 
 
-@router.post("/user-roles", status_code=status.HTTP_201_CREATED)
+@rbac_router.post("/user-roles", status_code=status.HTTP_201_CREATED)
 @inject
 async def assign_role_to_user(
     data: AssignRoleToUserRequest,
@@ -142,7 +142,7 @@ async def assign_role_to_user(
     return APIResponse[None].success(data=None, message="Role assigned.")
 
 
-@router.post("/user-groups", status_code=status.HTTP_201_CREATED)
+@rbac_router.post("/user-groups", status_code=status.HTTP_201_CREATED)
 @inject
 async def add_user_to_group(
     data: AddUserToGroupRequest,
@@ -159,7 +159,7 @@ async def add_user_to_group(
     return APIResponse[None].success(data=None, message="User added to group.")
 
 
-@router.post("/group-roles", status_code=status.HTTP_201_CREATED)
+@rbac_router.post("/group-roles", status_code=status.HTTP_201_CREATED)
 @inject
 async def assign_role_to_group(
     data: AssignRoleToGroupRequest,
@@ -176,7 +176,7 @@ async def assign_role_to_group(
     return APIResponse[None].success(data=None, message="Role assigned to group.")
 
 
-@router.post("/object-permissions", status_code=status.HTTP_201_CREATED)
+@rbac_router.post("/object-permissions", status_code=status.HTTP_201_CREATED)
 @inject
 async def grant_object_permission(
     data: GrantObjectPermissionRequest,
@@ -197,7 +197,7 @@ async def grant_object_permission(
     return APIResponse[None].success(data=None, message="Object permission granted.")
 
 
-@router.delete("/object-permissions", status_code=status.HTTP_200_OK)
+@rbac_router.delete("/object-permissions", status_code=status.HTTP_200_OK)
 @inject
 async def revoke_object_permission(
     data: RevokeObjectPermissionRequest,

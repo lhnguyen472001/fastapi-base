@@ -8,7 +8,7 @@ import pytest
 import pytest_asyncio
 
 from apps.rbac.decorators import require_access, require_ownership
-from apps.rbac.enforcer import create_enforcer
+from apps.rbac.enforcer import enforcer_factory
 from apps.rbac.exceptions import AccessDeniedError
 from apps.rbac.repositories import (
     GroupRepository,
@@ -48,7 +48,7 @@ def _short() -> str:
 @pytest_asyncio.fixture
 async def enforcer():
     url = app_settings.db.database_uri.render_as_string(hide_password=False)
-    return await create_enforcer(url)
+    return await enforcer_factory(url)
 
 
 @pytest_asyncio.fixture

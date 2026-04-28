@@ -127,7 +127,7 @@ class AuthSettings(BaseModel):
 class RBACSettings(BaseModel):
     """RBAC / Casbin settings."""
 
-    # Optional Redis-backed watcher. When set, ``create_enforcer`` attaches a
+    # Optional Redis-backed watcher. When set, ``enforcer_factory`` attaches a
     # pub/sub watcher so policy mutations on one worker invalidate the in-memory
     # enforcer on every other worker. Required before running
     # ``uvicorn --workers >1``; leave unset for single-worker dev.

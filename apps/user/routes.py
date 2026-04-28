@@ -20,10 +20,10 @@ from apps.user.schemas import (
 )
 from apps.user.services import UserService
 
-router = APIRouter(prefix="/users", tags=["users"])
+user_router = APIRouter(prefix="/users", tags=["users"])
 
 
-@router.post(
+@user_router.post(
     "",
     response_model=APIResponse[UserResponse],
     status_code=status.HTTP_201_CREATED,
@@ -41,7 +41,7 @@ async def create_user(
     )
 
 
-@router.get("/{user_id}", response_model=APIResponse[UserResponse])
+@user_router.get("/{user_id}", response_model=APIResponse[UserResponse])
 @inject
 async def get_user(
     user_id: uuid.UUID,
@@ -55,7 +55,7 @@ async def get_user(
     )
 
 
-@router.get("", response_model=APIResponse[PaginatedResponse[UserResponse]])
+@user_router.get("", response_model=APIResponse[PaginatedResponse[UserResponse]])
 @inject
 async def list_users(
     params: ListUsersRequest = Depends(),
@@ -75,7 +75,7 @@ async def list_users(
     )
 
 
-@router.patch("/{user_id}", response_model=APIResponse[UserResponse])
+@user_router.patch("/{user_id}", response_model=APIResponse[UserResponse])
 @inject
 async def update_user(
     user_id: uuid.UUID,
@@ -90,7 +90,7 @@ async def update_user(
     )
 
 
-@router.delete("/{user_id}", response_model=APIResponse[UserResponse])
+@user_router.delete("/{user_id}", response_model=APIResponse[UserResponse])
 @inject
 async def delete_user(
     user_id: uuid.UUID,

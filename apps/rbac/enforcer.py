@@ -52,4 +52,4 @@ def _attach_redis_watcher(enforcer: casbin.AsyncEnforcer, redis_url: str) -> Non
     """
     watcher = new_watcher(redis_url)
     enforcer.set_watcher(watcher)
-    logger.info("create_enforcer - Casbin Redis watcher attached at {url}", url=redis_url)
+    logger.info("enforcer_factory - Casbin Redis watcher attached at {url}", url=redis_url)

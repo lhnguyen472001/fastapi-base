@@ -51,7 +51,7 @@ def _client_metadata(request: Request) -> tuple[str | None, str | None]:
 @limiter.limit("5/minute")
 @inject
 async def register(
-    _: Request,
+    request: Request,
     data: RegisterRequest,
     session: AsyncSession = Depends(session_factory),
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
@@ -66,7 +66,7 @@ async def register(
 @limiter.limit("10/minute")
 @inject
 async def verify_email(
-    _: Request,
+    request: Request,
     data: VerifyEmailRequest,
     session: AsyncSession = Depends(session_factory),
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
@@ -86,7 +86,7 @@ async def verify_email(
 @limiter.limit("5/minute")
 @inject
 async def resend_verification(
-    _: Request,
+    request: Request,
     data: ResendVerificationRequest,
     session: AsyncSession = Depends(session_factory),
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
@@ -166,7 +166,6 @@ async def refresh(
 @auth_router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 @inject
 async def logout(
-    _: Request,
     data: LogoutRequest,
     session: AsyncSession = Depends(session_factory),
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
@@ -217,7 +216,7 @@ async def enable_2fa(
 @limiter.limit("5/minute")
 @inject
 async def disable_2fa(
-    _: Request,
+    request: Request,
     data: Disable2FARequest,
     session: AsyncSession = Depends(session_factory),
     current_user: User = Depends(get_current_user),
@@ -247,7 +246,6 @@ def _is_production() -> bool:
 )
 @inject
 async def google_authorize(
-    _: Request,
     response: Response,
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
 ) -> APIResponse[GoogleAuthorizeResponse]:
