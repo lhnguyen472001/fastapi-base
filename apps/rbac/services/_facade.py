@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 import uuid
 from datetime import datetime
 
@@ -20,31 +19,34 @@ from apps.rbac.models import (
 )
 from apps.rbac.services._group import GroupService
 from apps.rbac.services._object_permission import ObjectPermissionService
-from apps.rbac.services._role_permission import RolePermissionService
+from apps.rbac.services._permission import PermissionService
+from apps.rbac.services._role import RoleService
 
 
 class RBACService:
     """Write-side facade that delegates to the focused sub-services.
 
     The facade exists so existing routes and tests that depend on a single
-    ``RBACService`` keep working after the 3.3 split. New code should prefer
-    injecting the relevant sub-service directly
-    (:class:`RolePermissionService`, :class:`GroupService`,
-    :class:`ObjectPermissionService`).
+    ``RBACService`` keep working after the 3.3 / 3.4 splits. New code
+    should prefer injecting the relevant sub-service directly
+    (:class:`RoleService`, :class:`PermissionService`,
+    :class:`GroupService`, :class:`ObjectPermissionService`).
     """
 
     def __init__(
         self,
         *,
-        role_permission_service: RolePermissionService,
+        role_service: RoleService,
+        permission_service: PermissionService,
         group_service: GroupService,
         object_permission_service: ObjectPermissionService,
     ) -> None:
-        self.role_permission_service = role_permission_service
+        self.role_service = role_service
+        self.permission_service = permission_service
         self.group_service = group_service
         self.object_permission_service = object_permission_service
 
-    # ----- Roles / Permissions (RolePermissionService) ----------------------
+    # ----- Roles (RoleService) ---------------------------------------------
 
     async def create_role(
         self,
@@ -56,7 +58,7 @@ class RBACService:
         parent_id: int | None = None,
         level: int = 0,
     ) -> Role:
-        return await self.role_permission_service.create_role(
+        return await self.role_service.create_role(
             session,
             name=name,
             display_name=display_name,
@@ -64,6 +66,20 @@ class RBACService:
             parent_id=parent_id,
             level=level,
         )
+
+    async def assign_role_to_user(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: uuid.UUID,
+        role_id: int,
+        assigned_by: uuid.UUID | None = None,
+    ) -> UserRole:
+        return await self.role_service.assign_role_to_user(
+            session, user_id=user_id, role_id=role_id, assigned_by=assigned_by
+        )
+
+    # ----- Permissions (PermissionService) ----------------------------------
 
     async def create_permission(
         self,
@@ -76,7 +92,7 @@ class RBACService:
         description: str | None = None,
         category: str | None = None,
     ) -> Permission:
-        return await self.role_permission_service.create_permission(
+        return await self.permission_service.create_permission(
             session,
             name=name,
             display_name=display_name,
@@ -94,20 +110,8 @@ class RBACService:
         permission_id: int,
         granted_by: uuid.UUID | None = None,
     ) -> RolePermission:
-        return await self.role_permission_service.grant_permission_to_role(
+        return await self.permission_service.grant_permission_to_role(
             session, role_id=role_id, permission_id=permission_id, granted_by=granted_by
-        )
-
-    async def assign_role_to_user(
-        self,
-        session: AsyncSession,
-        *,
-        user_id: uuid.UUID,
-        role_id: int,
-        assigned_by: uuid.UUID | None = None,
-    ) -> UserRole:
-        return await self.role_permission_service.assign_role_to_user(
-            session, user_id=user_id, role_id=role_id, assigned_by=assigned_by
         )
 
     # ----- Groups (GroupService) -------------------------------------------

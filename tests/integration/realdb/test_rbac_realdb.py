@@ -24,8 +24,9 @@ from apps.rbac.services import (
     AccessService,
     GroupService,
     ObjectPermissionService,
+    PermissionService,
     RBACService,
-    RolePermissionService,
+    RoleService,
 )
 from apps.settings import app_settings
 from apps.user.repositories import UserRepository
@@ -61,15 +62,19 @@ async def rbac_service(enforcer) -> RBACService:
     group_role_repo = GroupRoleRepository()
     object_permission_repo = ObjectPermissionRepository()
 
-    role_permission_service = RolePermissionService(
-        role_repository=role_repo,
-        permission_repository=permission_repo,
-        role_permission_repository=role_permission_repo,
+    role_service = RoleService(
+        repository=role_repo,
         user_role_repository=user_role_repo,
         enforcer=enforcer,
     )
+    permission_service = PermissionService(
+        repository=permission_repo,
+        role_repository=role_repo,
+        role_permission_repository=role_permission_repo,
+        enforcer=enforcer,
+    )
     group_service = GroupService(
-        group_repository=group_repo,
+        repository=group_repo,
         role_repository=role_repo,
         user_group_repository=user_group_repo,
         group_role_repository=group_role_repo,
@@ -80,7 +85,8 @@ async def rbac_service(enforcer) -> RBACService:
         enforcer=enforcer,
     )
     return RBACService(
-        role_permission_service=role_permission_service,
+        role_service=role_service,
+        permission_service=permission_service,
         group_service=group_service,
         object_permission_service=object_permission_service,
     )

@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.core.database.transactional import transactional
+from apps.core.services.base import SQLAlchemyService
 from apps.rbac.exceptions import (
     GroupNotFoundError,
     RBACConflictError,
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
     )
 
 
-class GroupService:
+class GroupService(SQLAlchemyService[Group]):
     """Create groups and manage membership.
 
     Responsibilities:
@@ -46,13 +47,13 @@ class GroupService:
     def __init__(
         self,
         *,
-        group_repository: GroupRepository,
+        repository: GroupRepository,
         role_repository: RoleRepository,
         user_group_repository: UserGroupRepository,
         group_role_repository: GroupRoleRepository,
         enforcer: casbin.AsyncEnforcer,
     ) -> None:
-        self.group_repository = group_repository
+        super().__init__(repository=repository)
         self.role_repository = role_repository
         self.user_group_repository = user_group_repository
         self.group_role_repository = group_role_repository
@@ -70,7 +71,7 @@ class GroupService:
         level: int = 0,
     ) -> Group:
         try:
-            group = await self.group_repository.add(
+            group = await self.repository.add(
                 session,
                 data={
                     "name": name,
@@ -94,7 +95,7 @@ class GroupService:
         group_id: int,
         assigned_by: uuid.UUID | None = None,
     ) -> UserGroup:
-        group = await self.group_repository.get_one_by_id(session, item_id=group_id)
+        group = await self.repository.get_one_by_id(session, item_id=group_id)
         if group is None:
             raise GroupNotFoundError(message=f"Group {group_id} not found.")
 
@@ -127,7 +128,7 @@ class GroupService:
         role_id: int,
         assigned_by: uuid.UUID | None = None,
     ) -> GroupRole:
-        group = await self.group_repository.get_one_by_id(session, item_id=group_id)
+        group = await self.repository.get_one_by_id(session, item_id=group_id)
         if group is None:
             raise GroupNotFoundError(message=f"Group {group_id} not found.")
         role = await self.role_repository.get_one_by_id(session, item_id=role_id)

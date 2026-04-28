@@ -55,12 +55,14 @@ from apps.rbac.services._access import AccessService
 from apps.rbac.services._facade import RBACService
 from apps.rbac.services._group import GroupService
 from apps.rbac.services._object_permission import ObjectPermissionService
-from apps.rbac.services._role_permission import RolePermissionService
+from apps.rbac.services._permission import PermissionService
+from apps.rbac.services._role import RoleService
 
 __all__ = [
     "AccessService",
     "GroupService",
     "ObjectPermissionService",
+    "PermissionService",
     "RBACService",
-    "RolePermissionService",
+    "RoleService",
 ]

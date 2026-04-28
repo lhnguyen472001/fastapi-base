@@ -17,8 +17,9 @@ from apps.rbac.services import (
     AccessService,
     GroupService,
     ObjectPermissionService,
+    PermissionService,
     RBACService,
-    RolePermissionService,
+    RoleService,
 )
 from apps.settings import app_settings
 
@@ -46,19 +47,23 @@ class RBACContainer(containers.DeclarativeContainer):
     object_permission_repository = providers.Factory(ObjectPermissionRepository)
 
     # Focused write services — each is wired with only the repositories it
-    # actually depends on (ISP). The legacy ``RBACRepositories`` bundle was
-    # removed in Phase 1 #10.
-    role_permission_service = providers.Factory(
-        RolePermissionService,
-        role_repository=role_repository,
-        permission_repository=permission_repository,
-        role_permission_repository=role_permission_repository,
+    # actually depends on (ISP).
+    role_service = providers.Factory(
+        RoleService,
+        repository=role_repository,
         user_role_repository=user_role_repository,
+        enforcer=enforcer,
+    )
+    permission_service = providers.Factory(
+        PermissionService,
+        repository=permission_repository,
+        role_repository=role_repository,
+        role_permission_repository=role_permission_repository,
         enforcer=enforcer,
     )
     group_service = providers.Factory(
         GroupService,
-        group_repository=group_repository,
+        repository=group_repository,
         role_repository=role_repository,
         user_group_repository=user_group_repository,
         group_role_repository=group_role_repository,
@@ -73,7 +78,8 @@ class RBACContainer(containers.DeclarativeContainer):
     # Facade consumed by routes / tests expecting the pre-split public surface.
     rbac_service = providers.Factory(
         RBACService,
-        role_permission_service=role_permission_service,
+        role_service=role_service,
+        permission_service=permission_service,
         group_service=group_service,
         object_permission_service=object_permission_service,
     )
