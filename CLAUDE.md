@@ -29,21 +29,23 @@ apps/
 ├── containers.py                          # CoreContainer (engine, session singletons)
 ├── core/
 │   ├── logging.py                         # loguru + OTel trace formatter, InterceptHandler
-│   ├── database/sql/
+│   ├── database/
 │   │   ├── engine.py                      # Async engine factory (reader/writer split)
 │   │   ├── session.py                     # RoutingSession + async_scoped_session + session_factory
 │   │   ├── registry.py                    # ORM registry + MetadataRegistry
 │   │   ├── types.py                       # Type aliases (SQLAlchemyModelT, etc.)
 │   │   ├── utils.py                       # get_instrumented_attr, model_from_dict, slugify
 │   │   ├── filters.py                     # StatementFilter ABC + concrete filters
-│   │   ├── pagination.py                  # Offset + cursor pagination helpers
-│   │   ├── transactional.py               # @Transactional decorator (auto begin/commit/rollback)
+│   │   ├── transactional.py               # @transactional decorator (auto begin/commit/rollback)
 │   │   ├── model/
 │   │   │   ├── base.py                    # Declarative bases: UUIDBase, UUIDAuditBase, BigIntBase, etc.
 │   │   │   └── mixins/                    # UUID PK, BigInt PK, timestamps, soft delete, slug, sentinel
 │   │   └── repository/
-│   │       ├── protocol.py                # RepositoryProtocol (561 lines, full generic interface)
-│   │       └── base.py                    # BaseSQLAlchemyRepository (1053 lines, generic CRUD)
+│   │       ├── protocol.py                # ReaderProtocol / WriterProtocol / UpsertableProtocol / SQLAlchemyRepositoryProtocol
+│   │       ├── base.py                    # BaseSQLAlchemyRepository — generic CRUD entrypoint
+│   │       ├── _query_builder.py          # QueryBuilder — apply filters / order / kwargs to a Select
+│   │       ├── _statements.py             # Pure statement-shape helpers (soft-delete filter, count projection, dialect)
+│   │       └── _result_processor.py       # execute_statement, collect_rows, collect_rows_with_window_count
 │   ├── schemas/
 │   │   ├── base.py                        # BaseObjectSchema (Pydantic v2, from_attributes=True)
 │   │   ├── request.py                     # RequestObjectSchema, OffsetPaginationRequestSchema, OrderByRequestSchema
@@ -113,7 +115,7 @@ class UserContainer(containers.DeclarativeContainer):
 ## Important
 
 - **RBAC / Casbin & multi-worker:** the Casbin enforcer is per-worker in-memory. Running with `uvicorn --workers >1` will cause stale-cache reads after policy mutations until each worker reloads. Stay on `--workers 1` until a Casbin watcher (e.g. Redis pub/sub) is wired in. See `apps/rbac/enforcer.py` warning.
-- **Imports:** Use `apps.*` prefix for all local imports (e.g., `from apps.core.database.sql.engine import ...`)
+- **Imports:** Use `apps.*` prefix for all local imports (e.g., `from apps.core.database.engine import ...`)
 - **Sessions:** Use `Depends(session_factory)` in routes — auto read/write split via `RoutingSession`
 - **DI:** Use `@inject` + `Depends(Provide[Container.service])` — never manually instantiate services in routes
 - **Transactions:** Use `@Transactional()` decorator in services for multi-statement writes
