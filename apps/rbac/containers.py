@@ -84,7 +84,10 @@ class RBACContainer(containers.DeclarativeContainer):
         object_permission_service=object_permission_service,
     )
 
-    access_service = providers.Factory(AccessService, enforcer=enforcer)
+    # AccessService is stateless aside from the shared enforcer Resource —
+    # promote to Singleton so every authenticated request reuses one instance
+    # instead of paying per-request construction.
+    access_service = providers.Singleton(AccessService, enforcer=enforcer)
 
 
 rbac_container = RBACContainer()
