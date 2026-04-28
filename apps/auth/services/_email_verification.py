@@ -130,9 +130,11 @@ class EmailVerificationService:
                     html_body=html_body,
                 )
             )
-        except Exception as exc:
+        except (RuntimeError, OSError) as exc:
             # Don't roll back the registration; the OTP row is still in the
             # session and the user can call /auth/verify-email/resend later.
+            # SmtpEmailSender wraps aiosmtplib.SMTPException as RuntimeError;
+            # OSError covers DNS / TCP failures that escape the SMTP layer.
             logger.error(
                 "EmailVerificationService - issue_and_send - delivery failed for user_id={uid}: {err}",
                 uid=user.id,

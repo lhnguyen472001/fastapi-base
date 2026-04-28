@@ -2,6 +2,7 @@ import asyncio
 from typing import ClassVar
 
 from loguru import logger
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
@@ -38,13 +39,13 @@ class SQLAlchemySessionMiddleware(BaseHTTPMiddleware):
 
         try:
             return await call_next(request)
-        except Exception as e:
-            logger.error(f"Error in database session middleware: {e}")
+        except Exception:
+            logger.exception("SQLAlchemySessionMiddleware - dispatch - request failed")
             raise
         finally:
             try:
                 await scoped_session.remove()
-            except Exception as e:
-                logger.error(f"Error removing scoped session: {e}")
+            except SQLAlchemyError:
+                logger.exception("SQLAlchemySessionMiddleware - dispatch - scoped session remove failed")
             finally:
                 reset_session_ctx()
