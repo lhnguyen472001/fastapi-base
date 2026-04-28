@@ -23,16 +23,13 @@ Usage::
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Protocol, TypeVar
+from collections.abc import Sequence
+from typing import Any, ClassVar, Generic, Protocol, TypeVar
 
+from sqlalchemy.sql import ColumnElement
+
+from apps.core.database.filters import StatementFilter
 from apps.core.database.types import OrderingPair, SessionType, SQLAlchemyModelT
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from sqlalchemy.sql import ColumnElement
-
-    from apps.core.database.filters import StatementFilter
 
 __all__ = [
     "ReaderProtocol",

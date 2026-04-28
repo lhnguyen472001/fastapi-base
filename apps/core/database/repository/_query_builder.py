@@ -1,32 +1,19 @@
-"""Composable SQL-statement query builder.
-
-Extracted from :class:`apps.core.database.sql.repository.base.BaseSQLAlchemyRepository`
-as the first step of the 3.1 split so filter / order / keyword-predicate
-composition can be reused and tested in isolation from the CRUD machinery.
-
-The base repository now composes an instance of :class:`QueryBuilder` and
-forwards its ``apply_filter`` / ``apply_order_by`` / ``filter_select_by_kwargs``
-methods here, preserving the existing public API while carving out a seam
-that future phases (CRUD / ResultProcessor extraction) can lean on.
-"""
+"""Composable SQL-statement query builder."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Generic, cast
+from collections.abc import Iterable
+from typing import Any, Generic, cast
 
 from sqlalchemy.sql import ColumnElement, Select
 
+from apps.core.database.filters import StatementFilter
 from apps.core.database.types import (
     OrderingPair,
     SQLAlchemyModelT,
     StatementTypeT,
 )
 from apps.core.database.utils import get_instrumented_attr
-
-if TYPE_CHECKING:
-    from collections.abc import Iterable
-
-    from apps.core.database.filters import StatementFilter
 
 
 class QueryBuilder(Generic[SQLAlchemyModelT]):

@@ -8,6 +8,7 @@ from .base import (
     UUIDAuditBase,
     UUIDBase,
 )
+from .mixins import HasSoftDeletedMixin
 
 __all__ = (
     "AdvancedDeclarativeBase",
@@ -16,6 +17,7 @@ __all__ = (
     "BigIntBase",
     "CommonTableAttributes",
     "DefaultBase",
+    "HasSoftDeletedMixin",
     "UUIDAuditBase",
     "UUIDBase",
 )
