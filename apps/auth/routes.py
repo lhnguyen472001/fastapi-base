@@ -14,7 +14,6 @@ from apps.auth.schemas import (
     Login2FARequest,
     LoginRequest,
     LogoutRequest,
-    MessageResponse,
     RefreshRequest,
     RegisterRequest,
     RegisterResponse,
@@ -27,7 +26,7 @@ from apps.auth.schemas import (
 from apps.auth.services import AuthService
 from apps.core.database.session import session_factory
 from apps.core.rate_limit import limiter
-from apps.core.schemas.response import APIResponse
+from apps.core.schemas.response import APIResponse, MessageResponse
 from apps.settings import app_settings
 from apps.user.models import User
 from apps.user.schemas import UserResponse

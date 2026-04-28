@@ -47,6 +47,12 @@ class ResponseObjectSchema(BaseObjectSchema):
     )
 
 
+class MessageResponse(ResponseObjectSchema):
+    """Generic message response (used for endpoints that don't return data)."""
+
+    message: str
+
+
 ResponseObjectT = TypeVar("ResponseObjectT", bound="ResponseObjectSchema")
 
 

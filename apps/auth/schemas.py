@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Literal
 import uuid
+from typing import Literal
+
 from pydantic import EmailStr, Field
 
 from apps.core.schemas.request import RequestObjectSchema
@@ -66,7 +67,7 @@ class TokenPair(ResponseObjectSchema):
 
     access_token: str
     refresh_token: str
-    token_type: Literal["bearer"] = "bearer"
+    token_type: Literal["bearer"] = "bearer"  # noqa: S105 — bearer token delimiter, not a password
     expires_in: int = Field(..., description="Access token TTL in seconds")
 
 
@@ -75,12 +76,6 @@ class TwoFactorChallenge(ResponseObjectSchema):
 
     requires_2fa: Literal[True] = True
     challenge_token: str = Field(..., description="Short-lived JWT to submit with the TOTP code")
-
-
-class MessageResponse(ResponseObjectSchema):
-    """Generic message response (used for endpoints that don't return data)."""
-
-    message: str
 
 
 class Setup2FAResponse(ResponseObjectSchema):
