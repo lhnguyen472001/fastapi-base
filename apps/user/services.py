@@ -126,8 +126,11 @@ class UserService(SQLAlchemyService[User]):
         # fully random username.
         return f"user_{secrets.token_hex(8)}"
 
-    async def get_by_id(self, session: SessionType, *, user_id: uuid.UUID) -> User:
-        """Fetch a user by ID, excluding soft-deleted rows.
+    async def find_or_raise(self, session: SessionType, *, user_id: uuid.UUID) -> User:
+        """Fetch a user by ID or raise; excludes soft-deleted rows.
+
+        Distinct name from the base ``get_by_id`` (which returns ``T | None``)
+        to avoid the LSP violation that an override otherwise introduces.
 
         Args:
             session: Database session.

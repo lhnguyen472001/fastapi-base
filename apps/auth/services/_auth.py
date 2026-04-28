@@ -119,7 +119,7 @@ class AuthService:
         except (KeyError, ValueError) as e:
             raise InvalidTokenError() from e
 
-        user = await self.user_service.get_by_id(session, user_id=user_id)
+        user = await self.user_service.find_or_raise(session, user_id=user_id)
         if not await self.two_factor_service.verify(session, user=user, totp_code=totp_code):
             raise InvalidTwoFactorCodeError()
 

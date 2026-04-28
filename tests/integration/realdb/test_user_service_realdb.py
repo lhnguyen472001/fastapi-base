@@ -88,14 +88,14 @@ async def test_get_by_id_returns_user(real_session, user_service) -> None:
     created = await user_service.create(real_session, data=_create_request(suffix))
     await real_session.flush()
 
-    fetched = await user_service.get_by_id(real_session, user_id=created.id)
+    fetched = await user_service.find_or_raise(real_session, user_id=created.id)
     assert fetched.id == created.id
     assert fetched.username == created.username
 
 
 async def test_get_by_id_raises_when_missing(real_session, user_service) -> None:
     with pytest.raises(UserNotFoundError):
-        await user_service.get_by_id(real_session, user_id=uuid.uuid4())
+        await user_service.find_or_raise(real_session, user_id=uuid.uuid4())
 
 
 async def test_get_by_id_raises_for_soft_deleted(real_session, user_service) -> None:
@@ -106,7 +106,7 @@ async def test_get_by_id_raises_for_soft_deleted(real_session, user_service) -> 
     await user_service.soft_delete(real_session, user_id=created.id)
 
     with pytest.raises(UserNotFoundError):
-        await user_service.get_by_id(real_session, user_id=created.id)
+        await user_service.find_or_raise(real_session, user_id=created.id)
 
 
 # ------------------------------- list_users ---------------------------------
@@ -155,7 +155,7 @@ async def test_update_changes_field_and_persists(real_session, user_service) -> 
 
     assert updated.is_active is False
 
-    refetched = await user_service.get_by_id(real_session, user_id=created.id)
+    refetched = await user_service.find_or_raise(real_session, user_id=created.id)
     assert refetched.is_active is False
 
 

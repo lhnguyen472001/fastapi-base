@@ -70,8 +70,12 @@ class ProductCategoryService(SQLAlchemyService[ProductCategory]):
         }
         return await self.repository.add(session, payload, expunge=False)
 
-    async def get_by_id(self, session: SessionType, *, category_id: uuid.UUID) -> ProductCategory:
-        """Fetch a category by ID or raise :class:`ProductCategoryNotFoundError`."""
+    async def find_or_raise(self, session: SessionType, *, category_id: uuid.UUID) -> ProductCategory:
+        """Fetch a category by ID or raise :class:`ProductCategoryNotFoundError`.
+
+        Distinct name from the base ``get_by_id`` (which returns ``T | None``)
+        to avoid the LSP violation that an override otherwise introduces.
+        """
         category = await self.repository.find_by_id(session, category_id=category_id)
         if category is None:
             raise ProductCategoryNotFoundError(message=f"Product category with id '{category_id}' not found.")
@@ -109,7 +113,7 @@ class ProductCategoryService(SQLAlchemyService[ProductCategory]):
         data: UpdateProductCategoryRequest,
     ) -> ProductCategory:
         """Partially update a category."""
-        await self.get_by_id(session, category_id=category_id)
+        await self.find_or_raise(session, category_id=category_id)
 
         payload = data.model_dump(exclude_unset=True)
         if "slug" in payload and payload["slug"] is not None:
@@ -123,7 +127,7 @@ class ProductCategoryService(SQLAlchemyService[ProductCategory]):
     @transactional
     async def soft_delete(self, session: SessionType, *, category_id: uuid.UUID) -> ProductCategory:
         """Soft delete a category. Products keep their rows but lose the FK."""
-        category = await self.get_by_id(session, category_id=category_id)
+        category = await self.find_or_raise(session, category_id=category_id)
         category.deleted_at = datetime.datetime.now(datetime.UTC)
         session.add(category)
         return category
@@ -190,8 +194,12 @@ class ProductService(SQLAlchemyService[Product]):
         await session.refresh(product, attribute_names=["images", "category"])
         return product
 
-    async def get_by_id(self, session: SessionType, *, product_id: uuid.UUID) -> Product:
-        """Fetch a product by ID or raise :class:`ProductNotFoundError`."""
+    async def find_or_raise(self, session: SessionType, *, product_id: uuid.UUID) -> Product:
+        """Fetch a product by ID or raise :class:`ProductNotFoundError`.
+
+        Distinct name from the base ``get_by_id`` (which returns ``T | None``)
+        to avoid the LSP violation that an override otherwise introduces.
+        """
         product = await self.repository.find_by_id(session, product_id=product_id)
         if product is None:
             raise ProductNotFoundError(message=f"Product with id '{product_id}' not found.")
@@ -227,7 +235,7 @@ class ProductService(SQLAlchemyService[Product]):
         data: UpdateProductRequest,
     ) -> Product:
         """Partially update a product; optionally replace its images."""
-        product = await self.get_by_id(session, product_id=product_id)
+        product = await self.find_or_raise(session, product_id=product_id)
 
         payload = data.model_dump(exclude_unset=True)
         new_images = payload.pop("images", None)
@@ -254,7 +262,7 @@ class ProductService(SQLAlchemyService[Product]):
     @transactional
     async def soft_delete(self, session: SessionType, *, product_id: uuid.UUID) -> Product:
         """Soft delete a product."""
-        product = await self.get_by_id(session, product_id=product_id)
+        product = await self.find_or_raise(session, product_id=product_id)
         product.deleted_at = datetime.datetime.now(datetime.UTC)
         session.add(product)
         return product

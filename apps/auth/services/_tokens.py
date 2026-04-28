@@ -119,7 +119,7 @@ class TokenService:
         except (KeyError, ValueError) as e:
             raise InvalidTokenError() from e
 
-        user = await self.user_service.get_by_id(session, user_id=user_id)
+        user = await self.user_service.find_or_raise(session, user_id=user_id)
 
         new_pair, new_refresh_row = await self.issue_pair(
             session, user=user, user_agent=user_agent, ip_address=ip_address
@@ -154,7 +154,7 @@ class TokenService:
             raise InvalidTokenError() from e
 
         try:
-            user = await self.user_service.get_by_id(session, user_id=user_id)
+            user = await self.user_service.find_or_raise(session, user_id=user_id)
         except UserNotFoundError as e:
             raise InvalidTokenError() from e
 

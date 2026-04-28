@@ -128,12 +128,12 @@ class TestCategoryGet:
         created = await category_service.create(real_session, data=_category_request(suffix))
         await real_session.flush()
 
-        fetched = await category_service.get_by_id(real_session, category_id=created.id)
+        fetched = await category_service.find_or_raise(real_session, category_id=created.id)
         assert fetched.id == created.id
 
     async def test_get_by_id_raises_when_missing(self, real_session, category_service) -> None:
         with pytest.raises(ProductCategoryNotFoundError):
-            await category_service.get_by_id(real_session, category_id=uuid.uuid4())
+            await category_service.find_or_raise(real_session, category_id=uuid.uuid4())
 
     async def test_get_by_slug(self, real_session, category_service) -> None:
         suffix = uuid.uuid4().hex[:8]
@@ -245,7 +245,7 @@ class TestProductGet:
         )
         await real_session.flush()
 
-        fetched = await product_service.get_by_id(real_session, product_id=created.id)
+        fetched = await product_service.find_or_raise(real_session, product_id=created.id)
         assert fetched.id == created.id
         # Eager-loaded — accessing .images in async context must not raise.
         assert len(fetched.images) == 1
@@ -261,7 +261,7 @@ class TestProductGet:
 
     async def test_get_by_id_raises_when_missing(self, real_session, product_service) -> None:
         with pytest.raises(ProductNotFoundError):
-            await product_service.get_by_id(real_session, product_id=uuid.uuid4())
+            await product_service.find_or_raise(real_session, product_id=uuid.uuid4())
 
 
 class TestProductList:
@@ -397,4 +397,4 @@ class TestProductSoftDelete:
         assert deleted.deleted_at is not None
         # Subsequent lookups should now raise NotFound.
         with pytest.raises(ProductNotFoundError):
-            await product_service.get_by_id(real_session, product_id=created.id)
+            await product_service.find_or_raise(real_session, product_id=created.id)

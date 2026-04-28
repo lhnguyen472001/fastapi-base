@@ -137,7 +137,7 @@ class TestProductCategoryServiceGet:
     async def test_get_by_id_raises_when_missing(self, session, category_service, category_repo) -> None:
         category_repo.find_by_id.return_value = None
         with pytest.raises(ProductCategoryNotFoundError):
-            await category_service.get_by_id(session, category_id=uuid.uuid4())
+            await category_service.find_or_raise(session, category_id=uuid.uuid4())
 
     async def test_get_by_slug_raises_when_missing(self, session, category_service, category_repo) -> None:
         category_repo.find_by_slug.return_value = None
@@ -237,7 +237,7 @@ class TestProductServiceGet:
     async def test_get_by_id_raises_when_missing(self, session, product_service, product_repo) -> None:
         product_repo.find_by_id.return_value = None
         with pytest.raises(ProductNotFoundError):
-            await product_service.get_by_id(session, product_id=uuid.uuid4())
+            await product_service.find_or_raise(session, product_id=uuid.uuid4())
 
     async def test_get_by_slug_raises_when_missing(self, session, product_service, product_repo) -> None:
         product_repo.find_by_slug.return_value = None

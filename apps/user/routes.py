@@ -49,7 +49,7 @@ async def get_user(
     user_service: UserService = Depends(Provide[UserContainer.user_service]),
 ) -> APIResponse[UserResponse]:
     """Get a user by ID."""
-    user = await user_service.get_by_id(session, user_id=user_id)
+    user = await user_service.find_or_raise(session, user_id=user_id)
     return APIResponse[UserResponse].success(
         data=UserResponse.model_validate(user), message="User retrieved successfully."
     )
