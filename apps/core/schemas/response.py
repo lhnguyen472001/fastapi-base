@@ -30,6 +30,7 @@ class ResponseCodes(enum.StrEnum):
     API005 = "API005"  # Forbidden (403)
     API006 = "API006"  # Not found (404)
     API007 = "API007"  # Conflict (409)
+    API008 = "API008"  # Too many requests (429)
 
 
 class ResponseObjectSchema(BaseObjectSchema):

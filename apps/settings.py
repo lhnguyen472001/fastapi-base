@@ -114,6 +114,23 @@ class RBACSettings(BaseModel):
     )
 
 
+class RateLimitSettings(BaseModel):
+    """Per-process rate-limiting settings (slowapi)."""
+
+    storage_uri: str = Field(
+        default="memory://",
+        description=(
+            "slowapi/limits storage backend URI. ``memory://`` is per-worker "
+            "(fine for single-worker dev); use ``redis://host:port/db`` for "
+            "multi-worker so limits are shared."
+        ),
+    )
+    enabled: bool = Field(
+        default=True,
+        description="Master switch — set to false to bypass all rate limits (tests).",
+    )
+
+
 class EmailSettings(BaseModel):
     """Email sender settings (SMTP + Jinja templates)."""
 
@@ -156,6 +173,7 @@ class ApplicationSettings(BaseSettings):
     auth: AuthSettings = Field(default_factory=AuthSettings, description="Auth settings")
     email: EmailSettings = Field(default_factory=EmailSettings, description="Email settings")
     rbac: RBACSettings = Field(default_factory=RBACSettings, description="RBAC / Casbin settings")
+    rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings, description="Rate-limit settings")
 
     @model_validator(mode="after")
     def _enforce_production_safety(self) -> "ApplicationSettings":

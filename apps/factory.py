@@ -15,6 +15,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse, RedirectResponse
 from loguru import logger
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from apps.auth.routes import router as auth_router
 from apps.core.exceptions.base import BackendError
@@ -24,6 +26,7 @@ from apps.core.exceptions.handlers import (
     validation_exception_handler,
 )
 from apps.core.middlewares.sqlalchemy import SQLAlchemySessionMiddleware
+from apps.core.rate_limit import limiter, rate_limit_exceeded_handler
 from apps.health.routes import router as health_router
 from apps.product.containers import product_container  # noqa: F401
 from apps.product.routes import category_router as product_category_router, router as product_router
@@ -84,6 +87,10 @@ def create_app() -> FastAPI:
         default_response_class=ORJSONResponse,
     )
 
+    # Rate limiting ---------------------------------------------------------
+    app.state.limiter = limiter
+    app.add_middleware(SlowAPIMiddleware)
+
     # Middleware ------------------------------------------------------------
     app.add_middleware(
         CORSMiddleware,
@@ -95,6 +102,7 @@ def create_app() -> FastAPI:
     app.add_middleware(SQLAlchemySessionMiddleware)
 
     # Exception handlers ----------------------------------------------------
+    app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)  # type: ignore[arg-type]
     app.add_exception_handler(BackendError, backend_exception_handler)  # type: ignore[arg-type]
     app.add_exception_handler(
         RequestValidationError,

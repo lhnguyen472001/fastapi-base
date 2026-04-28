@@ -26,6 +26,7 @@ from apps.auth.schemas import (
 from apps.auth.services import AuthService
 from apps.auth.services._oauth import OAUTH_STATE_COOKIE_NAME
 from apps.core.database.session import session_factory
+from apps.core.rate_limit import limiter
 from apps.core.schemas.response import (
     APIResponse,
     JsonResponseStatuses,
@@ -52,8 +53,10 @@ def _client_metadata(request: Request) -> tuple[str | None, str | None]:
     response_model=APIResponse[RegisterResponse],
     status_code=status.HTTP_202_ACCEPTED,
 )
+@limiter.limit("5/minute")
 @inject
 async def register(
+    request: Request,  # noqa: ARG001 — consumed by slowapi via signature reflection
     data: RegisterRequest,
     session: AsyncSession = Depends(session_factory),
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
@@ -68,8 +71,10 @@ async def register(
 
 
 @router.post("/verify-email", response_model=APIResponse[MessageResponse])
+@limiter.limit("10/minute")
 @inject
 async def verify_email(
+    request: Request,  # noqa: ARG001 — consumed by slowapi via signature reflection
     data: VerifyEmailRequest,
     session: AsyncSession = Depends(session_factory),
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
@@ -88,8 +93,10 @@ async def verify_email(
     response_model=APIResponse[MessageResponse],
     status_code=status.HTTP_202_ACCEPTED,
 )
+@limiter.limit("5/minute")
 @inject
 async def resend_verification(
+    request: Request,  # noqa: ARG001 — consumed by slowapi via signature reflection
     data: ResendVerificationRequest,
     session: AsyncSession = Depends(session_factory),
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
@@ -110,6 +117,7 @@ async def resend_verification(
     "/login",
     response_model=APIResponse[TokenPair | TwoFactorChallenge],
 )
+@limiter.limit("5/minute")
 @inject
 async def login(
     data: LoginRequest,
@@ -128,6 +136,7 @@ async def login(
 
 
 @router.post("/login/2fa", response_model=APIResponse[TokenPair])
+@limiter.limit("10/minute")
 @inject
 async def login_2fa(
     data: Login2FARequest,
@@ -155,6 +164,7 @@ async def login_2fa(
 
 
 @router.post("/refresh", response_model=APIResponse[TokenPair])
+@limiter.limit("30/minute")
 @inject
 async def refresh(
     data: RefreshRequest,
@@ -240,8 +250,10 @@ async def enable_2fa(
 
 
 @router.post("/2fa/disable", response_model=APIResponse[MessageResponse])
+@limiter.limit("5/minute")
 @inject
 async def disable_2fa(
+    request: Request,  # noqa: ARG001 — consumed by slowapi via signature reflection
     data: Disable2FARequest,
     session: AsyncSession = Depends(session_factory),
     current_user: User = Depends(get_current_user),
@@ -302,6 +314,7 @@ async def google_authorize(
     "/oauth/google/callback",
     response_model=APIResponse[TokenPair | TwoFactorChallenge],
 )
+@limiter.limit("10/minute")
 @inject
 async def google_callback(
     code: str,
