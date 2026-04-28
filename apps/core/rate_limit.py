@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from fastapi import status
 from fastapi.responses import ORJSONResponse
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
