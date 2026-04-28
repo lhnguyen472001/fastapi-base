@@ -11,25 +11,18 @@ from apps.product.services import ProductCategoryService, ProductService
 
 
 class ProductContainer(containers.DeclarativeContainer):
-    """Wires Product repositories -> services and activates @inject in routes."""
+    """Wires the product service graph and activates @inject in routes."""
 
     wiring_config = containers.WiringConfiguration(modules=["apps.product.routes"])
 
     product_repository = providers.Factory(ProductRepository)
-    product_category_repository = providers.Factory(ProductCategoryRepository)
     product_image_repository = providers.Factory(ProductImageRepository)
+    product_category_repository = providers.Factory(ProductCategoryRepository)
 
-    product_category_service = providers.Factory(
-        ProductCategoryService,
-        repository=product_category_repository,
-    )
     product_service = providers.Factory(
         ProductService,
         repository=product_repository,
         category_repository=product_category_repository,
         image_repository=product_image_repository,
     )
-
-
-# Module-level instance so the wiring runs on import.
-product_container = ProductContainer()
+    product_category_service = providers.Factory(ProductCategoryService, repository=product_category_repository)

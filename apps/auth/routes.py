@@ -4,6 +4,7 @@ from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.auth.constants import OAUTH_COOKIE_PATH, OAUTH_STATE_COOKIE_NAME
 from apps.auth.containers import AuthContainer
 from apps.auth.dependencies import get_current_user
 from apps.auth.schemas import (
@@ -24,17 +25,14 @@ from apps.auth.schemas import (
     VerifyEmailRequest,
 )
 from apps.auth.services import AuthService
-from apps.auth.constants import OAUTH_COOKIE_PATH, OAUTH_STATE_COOKIE_NAME
 from apps.core.database.session import session_factory
 from apps.core.rate_limit import limiter
-from apps.core.schemas.response import (
-    APIResponse,
-)
+from apps.core.schemas.response import APIResponse
 from apps.settings import app_settings
 from apps.user.models import User
 from apps.user.schemas import UserResponse
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+auth_router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 def _client_metadata(request: Request) -> tuple[str | None, str | None]:
@@ -46,7 +44,7 @@ def _client_metadata(request: Request) -> tuple[str | None, str | None]:
 # ----------------------------- registration --------------------------------
 
 
-@router.post(
+@auth_router.post(
     "/register",
     response_model=APIResponse[RegisterResponse],
     status_code=status.HTTP_202_ACCEPTED,
@@ -54,7 +52,7 @@ def _client_metadata(request: Request) -> tuple[str | None, str | None]:
 @limiter.limit("5/minute")
 @inject
 async def register(
-    request: Request,  # noqa: ARG001 — consumed by slowapi via signature reflection
+    _: Request,
     data: RegisterRequest,
     session: AsyncSession = Depends(session_factory),
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
@@ -65,22 +63,23 @@ async def register(
     )
 
 
-@router.post("/verify-email", response_model=APIResponse[MessageResponse])
+@auth_router.post("/verify-email", response_model=APIResponse[MessageResponse])
 @limiter.limit("10/minute")
 @inject
 async def verify_email(
-    request: Request,  # noqa: ARG001 — consumed by slowapi via signature reflection
+    _: Request,
     data: VerifyEmailRequest,
     session: AsyncSession = Depends(session_factory),
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
 ) -> APIResponse[MessageResponse]:
     await auth_service.verify_email(session, email=data.email, code=data.code)
     return APIResponse[MessageResponse].success(
-        data=MessageResponse(message="Email verified."), message="Email verified successfully."
+        data=MessageResponse(message="Email verified."),
+        message="Email verified successfully.",
     )
 
 
-@router.post(
+@auth_router.post(
     "/verify-email/resend",
     response_model=APIResponse[MessageResponse],
     status_code=status.HTTP_202_ACCEPTED,
@@ -88,7 +87,7 @@ async def verify_email(
 @limiter.limit("5/minute")
 @inject
 async def resend_verification(
-    request: Request,  # noqa: ARG001 — consumed by slowapi via signature reflection
+    _: Request,
     data: ResendVerificationRequest,
     session: AsyncSession = Depends(session_factory),
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
@@ -103,15 +102,15 @@ async def resend_verification(
 # ----------------------------- login flows ---------------------------------
 
 
-@router.post(
+@auth_router.post(
     "/login",
     response_model=APIResponse[TokenPair | TwoFactorChallenge],
 )
 @limiter.limit("5/minute")
 @inject
 async def login(
-    data: LoginRequest,
     request: Request,
+    data: LoginRequest,
     session: AsyncSession = Depends(session_factory),
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
 ) -> APIResponse[TokenPair | TwoFactorChallenge]:
@@ -123,12 +122,12 @@ async def login(
     )
 
 
-@router.post("/login/2fa", response_model=APIResponse[TokenPair])
+@auth_router.post("/login/2fa", response_model=APIResponse[TokenPair])
 @limiter.limit("10/minute")
 @inject
 async def login_2fa(
-    data: Login2FARequest,
     request: Request,
+    data: Login2FARequest,
     session: AsyncSession = Depends(session_factory),
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
 ) -> APIResponse[TokenPair]:
@@ -146,12 +145,12 @@ async def login_2fa(
 # ----------------------------- token lifecycle -----------------------------
 
 
-@router.post("/refresh", response_model=APIResponse[TokenPair])
+@auth_router.post("/refresh", response_model=APIResponse[TokenPair])
 @limiter.limit("30/minute")
 @inject
 async def refresh(
-    data: RefreshRequest,
     request: Request,
+    data: RefreshRequest,
     session: AsyncSession = Depends(session_factory),
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
 ) -> APIResponse[TokenPair]:
@@ -165,9 +164,10 @@ async def refresh(
     return APIResponse[TokenPair].success(data=pair, message="Token refreshed.")
 
 
-@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+@auth_router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 @inject
 async def logout(
+    _: Request,
     data: LogoutRequest,
     session: AsyncSession = Depends(session_factory),
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
@@ -179,10 +179,8 @@ async def logout(
 # --------------------------------- me --------------------------------------
 
 
-@router.get("/me", response_model=APIResponse[UserResponse])
-async def me(
-    current_user: User = Depends(get_current_user),
-) -> APIResponse[UserResponse]:
+@auth_router.get("/me", response_model=APIResponse[UserResponse])
+async def me(current_user: User = Depends(get_current_user)) -> APIResponse[UserResponse]:
     return APIResponse[UserResponse].success(
         data=UserResponse.model_validate(current_user), message="User retrieved successfully."
     )
@@ -191,7 +189,7 @@ async def me(
 # --------------------------------- 2FA -------------------------------------
 
 
-@router.post("/2fa/setup", response_model=APIResponse[Setup2FAResponse])
+@auth_router.post("/2fa/setup", response_model=APIResponse[Setup2FAResponse])
 @inject
 async def setup_2fa(
     session: AsyncSession = Depends(session_factory),
@@ -202,7 +200,7 @@ async def setup_2fa(
     return APIResponse[Setup2FAResponse].success(data=setup, message="2FA setup initiated.")
 
 
-@router.post("/2fa/enable", response_model=APIResponse[MessageResponse])
+@auth_router.post("/2fa/enable", response_model=APIResponse[MessageResponse])
 @inject
 async def enable_2fa(
     data: Enable2FARequest,
@@ -216,11 +214,11 @@ async def enable_2fa(
     )
 
 
-@router.post("/2fa/disable", response_model=APIResponse[MessageResponse])
+@auth_router.post("/2fa/disable", response_model=APIResponse[MessageResponse])
 @limiter.limit("5/minute")
 @inject
 async def disable_2fa(
-    request: Request,  # noqa: ARG001 — consumed by slowapi via signature reflection
+    _: Request,
     data: Disable2FARequest,
     session: AsyncSession = Depends(session_factory),
     current_user: User = Depends(get_current_user),
@@ -244,12 +242,13 @@ def _is_production() -> bool:
     return app_settings.environment.lower() == "production"
 
 
-@router.get(
+@auth_router.get(
     "/oauth/google/authorize",
     response_model=APIResponse[GoogleAuthorizeResponse],
 )
 @inject
 async def google_authorize(
+    _: Request,
     response: Response,
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
 ) -> APIResponse[GoogleAuthorizeResponse]:
@@ -269,17 +268,17 @@ async def google_authorize(
     )
 
 
-@router.get(
+@auth_router.get(
     "/oauth/google/callback",
     response_model=APIResponse[TokenPair | TwoFactorChallenge],
 )
 @limiter.limit("10/minute")
 @inject
 async def google_callback(
-    code: str,
-    state: str,
     request: Request,
     response: Response,
+    code: str,
+    state: str,
     session: AsyncSession = Depends(session_factory),
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
 ) -> APIResponse[TokenPair | TwoFactorChallenge]:

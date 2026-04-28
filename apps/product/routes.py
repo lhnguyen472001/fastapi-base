@@ -6,10 +6,11 @@ Protected (``access_required``): create / update / delete endpoints.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import uuid
 
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.core.database.session import session_factory
 from apps.core.schemas.response import (
@@ -27,18 +28,12 @@ from apps.product.schemas import (
     UpdateProductCategoryRequest,
     UpdateProductRequest,
 )
+from apps.product.services import ProductCategoryService, ProductService
 from apps.rbac.dependencies import access_required
+from apps.user.models import User
 
-if TYPE_CHECKING:
-    import uuid
-
-    from sqlalchemy.ext.asyncio import AsyncSession
-
-    from apps.product.services import ProductCategoryService, ProductService
-    from apps.user.models import User
-
-router = APIRouter(prefix="/products", tags=["products"])
-category_router = APIRouter(prefix="/product-categories", tags=["product-categories"])
+product_router = APIRouter(prefix="/products", tags=["products"])
+product_category_router = APIRouter(prefix="/product-categories", tags=["product-categories"])
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +41,7 @@ category_router = APIRouter(prefix="/product-categories", tags=["product-categor
 # ---------------------------------------------------------------------------
 
 
-@router.get("", response_model=APIResponse[PaginatedResponse[ProductResponse]])
+@product_router.get("", response_model=APIResponse[PaginatedResponse[ProductResponse]])
 @inject
 async def list_products(
     params: ListProductsRequest = Depends(),
@@ -66,7 +61,7 @@ async def list_products(
     )
 
 
-@router.get("/{slug}", response_model=APIResponse[ProductResponse])
+@product_router.get("/{slug}", response_model=APIResponse[ProductResponse])
 @inject
 async def get_product_by_slug(
     slug: str,
@@ -85,7 +80,7 @@ async def get_product_by_slug(
 # ---------------------------------------------------------------------------
 
 
-@router.post(
+@product_router.post(
     "",
     response_model=APIResponse[ProductResponse],
     status_code=status.HTTP_201_CREATED,
@@ -104,7 +99,7 @@ async def create_product(
     )
 
 
-@router.patch("/{product_id}", response_model=APIResponse[ProductResponse])
+@product_router.patch("/{product_id}", response_model=APIResponse[ProductResponse])
 @inject
 async def update_product(
     product_id: uuid.UUID,
@@ -120,7 +115,7 @@ async def update_product(
     )
 
 
-@router.delete("/{product_id}", response_model=APIResponse[ProductResponse])
+@product_router.delete("/{product_id}", response_model=APIResponse[ProductResponse])
 @inject
 async def delete_product(
     product_id: uuid.UUID,
@@ -140,7 +135,7 @@ async def delete_product(
 # ---------------------------------------------------------------------------
 
 
-@category_router.get(
+@product_category_router.get(
     "",
     response_model=APIResponse[PaginatedResponse[ProductCategoryResponse]],
 )
@@ -163,7 +158,7 @@ async def list_categories(
     )
 
 
-@category_router.get("/{slug}", response_model=APIResponse[ProductCategoryResponse])
+@product_category_router.get("/{slug}", response_model=APIResponse[ProductCategoryResponse])
 @inject
 async def get_category_by_slug(
     slug: str,
@@ -182,7 +177,7 @@ async def get_category_by_slug(
 # ---------------------------------------------------------------------------
 
 
-@category_router.post(
+@product_category_router.post(
     "",
     response_model=APIResponse[ProductCategoryResponse],
     status_code=status.HTTP_201_CREATED,
@@ -201,7 +196,7 @@ async def create_category(
     )
 
 
-@category_router.patch("/{category_id}", response_model=APIResponse[ProductCategoryResponse])
+@product_category_router.patch("/{category_id}", response_model=APIResponse[ProductCategoryResponse])
 @inject
 async def update_category(
     category_id: uuid.UUID,
@@ -217,7 +212,7 @@ async def update_category(
     )
 
 
-@category_router.delete("/{category_id}", response_model=APIResponse[ProductCategoryResponse])
+@product_category_router.delete("/{category_id}", response_model=APIResponse[ProductCategoryResponse])
 @inject
 async def delete_category(
     category_id: uuid.UUID,

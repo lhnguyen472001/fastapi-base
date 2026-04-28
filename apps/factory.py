@@ -19,8 +19,8 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from apps.auth.containers import AuthContainer
-from apps.auth.routes import router as auth_router
-from apps.core.database.session import _async_session_factory
+from apps.auth.routes import auth_router
+from apps.core.database.session import async_session_factory
 from apps.core.exceptions.base import BackendError
 from apps.core.exceptions.handlers import (
     backend_exception_handler,
@@ -30,27 +30,21 @@ from apps.core.exceptions.handlers import (
 from apps.core.middlewares.sqlalchemy import SQLAlchemySessionMiddleware
 from apps.core.rate_limit import limiter, rate_limit_exceeded_handler
 from apps.core.redis import close_redis_client
-from apps.health.routes import router as health_router
-from apps.product.containers import product_container  # noqa: F401
-from apps.product.routes import category_router as product_category_router, router as product_router
-from apps.rbac.containers import rbac_container
-from apps.rbac.routes import router as rbac_router
+from apps.health.routes import health_router
+from apps.product.routes import product_category_router, product_router
+from apps.rbac.enforcer import enforcer_factory
+from apps.rbac.routes import rbac_router
 from apps.rbac.seeders import sync_registered_resources
 from apps.settings import app_settings
-from apps.user.routes import router as user_router
+from apps.user.routes import user_router
+
+from .containers import AppContainer
 
 API_V1_PREFIX = "/api/v1"
 
 
-def _check_rbac_multi_worker_safety() -> None:
-    """Refuse to boot when multi-worker is configured without a Casbin watcher.
-
-    Each worker holds an independent in-memory Casbin enforcer. Without a
-    Redis watcher to broadcast policy mutations, RBAC decisions diverge
-    across workers (a role granted on worker A is invisible to worker B
-    until B reloads its enforcer). Failing fast is safer than silently
-    serving inconsistent authorization decisions.
-    """
+def verify_rbac_multi_worker_safety() -> None:
+    """Refuse to boot when multi-worker is configured without a Casbin watcher."""
     if app_settings.workers > 1 and not app_settings.rbac.watcher_redis_url:
         msg = (
             f"WORKERS={app_settings.workers} requires RBAC_WATCHER_REDIS_URL "
@@ -69,13 +63,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     explicitly initialized before any route can resolve it. We do that here
     so a missing database connection causes the app to fail-fast at startup.
     """
-    _check_rbac_multi_worker_safety()
+    verify_rbac_multi_worker_safety()
     logger.info("factory - lifespan - Initializing RBAC resources")
-    await rbac_container.init_resources()  # type: ignore[func-returns-value]
 
     if app_settings.rbac.auto_seed_resources_from_registry:
-        enforcer = await rbac_container.enforcer()
-        async with _async_session_factory() as seed_session, seed_session.begin():
+        enforcer = await enforcer_factory()
+        async with async_session_factory() as seed_session, seed_session.begin():
             await sync_registered_resources(
                 seed_session,
                 enforcer,
@@ -87,12 +80,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         logger.info("factory - lifespan - Shutting down")
-        await rbac_container.shutdown_resources()  # type: ignore[func-returns-value]
         await AuthContainer.google_oauth_client().aclose()
         await close_redis_client()
 
 
-def create_app() -> FastAPI:
+def application_factory() -> FastAPI:
     """Build and return a configured FastAPI application."""
     app = FastAPI(
         title=app_settings.app_name,
@@ -102,6 +94,10 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
         default_response_class=ORJSONResponse,
     )
+
+    container = AppContainer()
+    container.init_resources()
+    container.wire(modules=[__name__])
 
     # Rate limiting ---------------------------------------------------------
     app.state.limiter = limiter
@@ -141,4 +137,4 @@ def create_app() -> FastAPI:
     return app
 
 
-app = create_app()
+app = application_factory()

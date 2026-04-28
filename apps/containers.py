@@ -1,13 +1,13 @@
 from dependency_injector import containers, providers
 
-from apps.core.database.engine import engine_factory
-from apps.core.database.session import session_factory
+from apps.auth.containers import AuthContainer
+from apps.product.containers import ProductContainer
+from apps.rbac.containers import RBACContainer
+from apps.user.containers import UserContainer
 
 
-class CoreContainer(containers.DeclarativeContainer):
-    wiring_config = containers.WiringConfiguration(
-        packages=["apps.libs.database.sql.repositories"],
-    )
-
-    engine = providers.Singleton(engine_factory)
-    session = providers.Singleton(session_factory)
+class AppContainer(containers.DeclarativeContainer):
+    auth: providers.Provider[AuthContainer] = providers.Container(AuthContainer)
+    user: providers.Provider[UserContainer] = providers.Container(UserContainer)
+    rbac: providers.Provider[RBACContainer] = providers.Container(RBACContainer)
+    product: providers.Provider[ProductContainer] = providers.Container(ProductContainer)

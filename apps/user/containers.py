@@ -7,13 +7,9 @@ from apps.user.services import UserService
 
 
 class UserContainer(containers.DeclarativeContainer):
-    """Wires UserRepository -> UserService and activates @inject in routes."""
+    """Wires the user service graph and activates @inject in routes."""
 
     wiring_config = containers.WiringConfiguration(modules=["apps.user.routes"])
 
     user_repository = providers.Factory(UserRepository)
     user_service = providers.Factory(UserService, repository=user_repository)
-
-
-# Module-level instance so the wiring runs on import.
-user_container = UserContainer()

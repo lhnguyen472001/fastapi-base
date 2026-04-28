@@ -87,7 +87,3 @@ class AuthContainer(containers.DeclarativeContainer):
         two_factor_service=two_factor_service,
         oauth_service=oauth_service,
     )
-
-
-# Module-level instantiation activates the wiring on import.
-auth_container = AuthContainer()

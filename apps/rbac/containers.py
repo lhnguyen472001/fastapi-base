@@ -2,7 +2,7 @@
 
 from dependency_injector import containers, providers
 
-from apps.rbac.enforcer import create_enforcer
+from apps.rbac.enforcer import enforcer_factory
 from apps.rbac.repositories import (
     GroupRepository,
     GroupRoleRepository,
@@ -21,7 +21,6 @@ from apps.rbac.services import (
     RBACService,
     RoleService,
 )
-from apps.settings import app_settings
 
 
 class RBACContainer(containers.DeclarativeContainer):
@@ -31,11 +30,7 @@ class RBACContainer(containers.DeclarativeContainer):
 
     # Async resource — must be initialized via ``container.init_resources()``
     # in the FastAPI lifespan handler.
-    enforcer = providers.Resource(
-        create_enforcer,
-        database_uri=app_settings.db.database_uri.render_as_string(hide_password=False),
-        watcher_redis_url=app_settings.rbac.watcher_redis_url,
-    )
+    enforcer = providers.Resource(enforcer_factory)
 
     role_repository = providers.Factory(RoleRepository)
     permission_repository = providers.Factory(PermissionRepository)
@@ -88,6 +83,3 @@ class RBACContainer(containers.DeclarativeContainer):
     # promote to Singleton so every authenticated request reuses one instance
     # instead of paying per-request construction.
     access_service = providers.Singleton(AccessService, enforcer=enforcer)
-
-
-rbac_container = RBACContainer()
