@@ -24,8 +24,8 @@ from apps.auth.exceptions import (
     RefreshTokenRevokedError,
     TwoFactorNotEnabledError,
 )
+from apps.auth.constants import GOOGLE_TOKEN_ENDPOINT, GOOGLE_USERINFO_ENDPOINT
 from apps.auth.oauth import GoogleOAuthClient
-from apps.auth.oauth.google import GOOGLE_TOKEN_ENDPOINT, GOOGLE_USERINFO_ENDPOINT
 from apps.auth.repository import EmailVerificationRepository, RefreshTokenRepository
 from apps.auth.schemas import (
     LoginRequest,

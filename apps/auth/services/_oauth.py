@@ -26,8 +26,6 @@ from apps.core.database.types import SessionType
 from apps.user.models import User
 from apps.user.services import UserService
 
-OAUTH_STATE_COOKIE_NAME = "oauth_state"
-
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class OAuthFlowStart:

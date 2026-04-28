@@ -24,7 +24,7 @@ from apps.auth.schemas import (
     VerifyEmailRequest,
 )
 from apps.auth.services import AuthService
-from apps.auth.services._oauth import OAUTH_STATE_COOKIE_NAME
+from apps.auth.constants import OAUTH_COOKIE_PATH, OAUTH_STATE_COOKIE_NAME
 from apps.core.database.session import session_factory
 from apps.core.rate_limit import limiter
 from apps.core.schemas.response import (
@@ -240,9 +240,6 @@ async def disable_2fa(
 # ------------------------------- Google OAuth ------------------------------
 
 
-_OAUTH_COOKIE_PATH = "/api/v1/auth/oauth/google"
-
-
 def _is_production() -> bool:
     return app_settings.environment.lower() == "production"
 
@@ -264,7 +261,7 @@ async def google_authorize(
         httponly=True,
         secure=_is_production(),
         samesite="lax",
-        path=_OAUTH_COOKIE_PATH,
+        path=OAUTH_COOKIE_PATH,
     )
     return APIResponse[GoogleAuthorizeResponse].success(
         data=GoogleAuthorizeResponse(authorize_url=flow.authorize_url, state=flow.state_token),
@@ -298,7 +295,7 @@ async def google_callback(
             ip_address=ip_address,
         )
     finally:
-        response.delete_cookie(key=OAUTH_STATE_COOKIE_NAME, path=_OAUTH_COOKIE_PATH)
+        response.delete_cookie(key=OAUTH_STATE_COOKIE_NAME, path=OAUTH_COOKIE_PATH)
     return APIResponse[TokenPair | TwoFactorChallenge].success(
         data=result,
         message="Two-factor required." if isinstance(result, TwoFactorChallenge) else "Logged in via Google.",

@@ -4,7 +4,7 @@ import asyncio
 
 import bcrypt
 
-_BCRYPT_ROUNDS = 12
+from apps.auth.constants import BCRYPT_ROUNDS
 
 
 def hash_password(plain_password: str) -> str:
@@ -15,7 +15,7 @@ def hash_password(plain_password: str) -> str:
     bcrypt work (CPU-bound, ~200-500 ms at rounds=12) does not block
     the event loop.
     """
-    salt = bcrypt.gensalt(rounds=_BCRYPT_ROUNDS)
+    salt = bcrypt.gensalt(rounds=BCRYPT_ROUNDS)
     hashed = bcrypt.hashpw(plain_password.encode("utf-8"), salt)
     return hashed.decode("utf-8")
 

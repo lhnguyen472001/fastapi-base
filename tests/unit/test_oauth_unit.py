@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from apps.auth.constants import OAUTH_STATE_COOKIE_NAME
 from apps.auth.enums import TokenType
 from apps.auth.exceptions import OAuthStateInvalidError
 from apps.auth.security import (
@@ -25,7 +26,6 @@ from apps.auth.security import (
     generate_pkce_verifier,
 )
 from apps.auth.services._oauth import (
-    OAUTH_STATE_COOKIE_NAME,
     OAuthFlowStart,
     OAuthService,
 )

@@ -6,12 +6,13 @@ from urllib.parse import urlencode
 import httpx
 from loguru import logger
 
+from apps.auth.constants import (
+    GOOGLE_AUTHORIZE_ENDPOINT,
+    GOOGLE_OAUTH_SCOPES,
+    GOOGLE_TOKEN_ENDPOINT,
+    GOOGLE_USERINFO_ENDPOINT,
+)
 from apps.auth.exceptions import OAuthProviderError
-
-GOOGLE_AUTHORIZE_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
-GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
-GOOGLE_USERINFO_ENDPOINT = "https://www.googleapis.com/oauth2/v3/userinfo"
-GOOGLE_OAUTH_SCOPES = "openid email profile"
 
 
 @dataclass(slots=True, kw_only=True, frozen=True)
