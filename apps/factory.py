@@ -19,6 +19,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from apps.auth.routes import router as auth_router
+from apps.core.database.session import _async_session_factory
 from apps.core.exceptions.base import BackendError
 from apps.core.exceptions.handlers import (
     backend_exception_handler,
@@ -32,6 +33,7 @@ from apps.product.containers import product_container  # noqa: F401
 from apps.product.routes import category_router as product_category_router, router as product_router
 from apps.rbac.containers import rbac_container
 from apps.rbac.routes import router as rbac_router
+from apps.rbac.seeders import sync_registered_resources
 from apps.settings import app_settings
 from apps.user.routes import router as user_router
 
@@ -68,6 +70,16 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     _check_rbac_multi_worker_safety()
     logger.info("factory - lifespan - Initializing RBAC resources")
     await rbac_container.init_resources()  # type: ignore[func-returns-value]
+
+    if app_settings.rbac.auto_seed_resources_from_registry:
+        enforcer = await rbac_container.enforcer()
+        async with _async_session_factory() as seed_session, seed_session.begin():
+            await sync_registered_resources(
+                seed_session,
+                enforcer,
+                admin_role_name=app_settings.rbac.system_admin_role_name,
+            )
+
     logger.info("factory - lifespan - Application started")
     try:
         yield

@@ -113,6 +113,22 @@ class RBACSettings(BaseModel):
         description="Redis URL for the Casbin watcher (e.g. redis://localhost:6379/0)",
     )
 
+    # Auto-seed permissions and Casbin policies from ``@rbac_resource``-decorated
+    # models at startup. Off by default — flip on once the system_admin role is
+    # the canonical bootstrap role for your environment.
+    auto_seed_resources_from_registry: bool = Field(
+        default=False,
+        description=(
+            "If true, the lifespan hook reads apps.rbac.registry._RESOURCE_REGISTRY "
+            "and idempotently inserts the matching Permission rows + admin Casbin "
+            "policies on every worker boot."
+        ),
+    )
+    system_admin_role_name: str = Field(
+        default="system_admin",
+        description="Role granted every (resource, action) pair declared via @rbac_resource.",
+    )
+
 
 class RateLimitSettings(BaseModel):
     """Per-process rate-limiting settings (slowapi)."""
