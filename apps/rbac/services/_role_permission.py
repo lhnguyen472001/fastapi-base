@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import uuid
+from typing import TYPE_CHECKING
 
+import casbin
 from loguru import logger
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.core.database.transactional import transactional
 from apps.rbac.exceptions import (
@@ -12,42 +16,34 @@ from apps.rbac.exceptions import (
     RBACConflictError,
     RoleNotFoundError,
 )
+from apps.rbac.models import Permission, Role, RolePermission, UserRole
 from apps.rbac.services._helpers import role_sub, user_sub
 
-import uuid
-
-import casbin
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from apps.rbac.models import Permission, Role, RolePermission, UserRole
-from apps.rbac.services._repositories import RBACRepositories
+if TYPE_CHECKING:
+    from apps.rbac.repositories import (
+        PermissionRepository,
+        RolePermissionRepository,
+        RoleRepository,
+        UserRoleRepository,
+    )
 
 
 class RolePermissionService:
-    """Create roles/permissions and wire them up.
-
-    Responsibilities:
-
-    * :meth:`create_role` — CREATE a role.
-    * :meth:`create_permission` — CREATE a (resource, action) capability.
-    * :meth:`grant_permission_to_role` — link role↔permission + Casbin.
-    * :meth:`assign_role_to_user` — link user↔role + Casbin.
-
-    All mutating methods mirror the relational write into the Casbin
-    enforcer inside the same ``@transactional`` block (see the service
-    package docstring for the rationale).
-    """
+    """Create roles/permissions and wire them up."""
 
     def __init__(
         self,
         *,
-        repositories: RBACRepositories,
+        role_repository: RoleRepository,
+        permission_repository: PermissionRepository,
+        role_permission_repository: RolePermissionRepository,
+        user_role_repository: UserRoleRepository,
         enforcer: casbin.AsyncEnforcer,
     ) -> None:
-        self.role_repository = repositories.role
-        self.permission_repository = repositories.permission
-        self.role_permission_repository = repositories.role_permission
-        self.user_role_repository = repositories.user_role
+        self.role_repository = role_repository
+        self.permission_repository = permission_repository
+        self.role_permission_repository = role_permission_repository
+        self.user_role_repository = user_role_repository
         self.enforcer = enforcer
 
     @transactional
@@ -143,7 +139,6 @@ class RolePermissionService:
             raise RBACConflictError(message="Permission already granted to role.") from exc
 
         await self.enforcer.add_policy(role_sub(role_id), perm.resource, perm.action)
-        await self.enforcer.save_policy()
         logger.info(
             "RolePermissionService - grant_permission_to_role - role={} perm={}",
             role_id,
@@ -177,7 +172,6 @@ class RolePermissionService:
             raise RBACConflictError(message="User already assigned to this role.") from exc
 
         await self.enforcer.add_grouping_policy(user_sub(user_id), role_sub(role_id))
-        await self.enforcer.save_policy()
         logger.info(
             "RolePermissionService - assign_role_to_user - user={} role={}",
             user_id,

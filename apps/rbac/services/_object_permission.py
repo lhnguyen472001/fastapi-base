@@ -2,24 +2,26 @@
 
 from __future__ import annotations
 
-from loguru import logger
-from sqlalchemy.exc import IntegrityError
-
-from apps.core.database.transactional import transactional
-from apps.rbac.exceptions import RBACConflictError
-from apps.rbac.services._helpers import instance_obj, user_sub
-
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import casbin
+from loguru import logger
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.core.database.transactional import transactional
+from apps.core.services.base import SQLAlchemyService
+from apps.rbac.exceptions import RBACConflictError
 from apps.rbac.models import ObjectPermission
-from apps.rbac.services._repositories import RBACRepositories
+from apps.rbac.services._helpers import instance_obj, user_sub
+
+if TYPE_CHECKING:
+    from apps.rbac.repositories import ObjectPermissionRepository
 
 
-class ObjectPermissionService:
+class ObjectPermissionService(SQLAlchemyService[ObjectPermission]):
     """Grant and revoke per-object ABAC permissions.
 
     Each grant becomes a Casbin policy of the shape
@@ -31,10 +33,10 @@ class ObjectPermissionService:
     def __init__(
         self,
         *,
-        repositories: RBACRepositories,
+        repository: ObjectPermissionRepository,
         enforcer: casbin.AsyncEnforcer,
     ) -> None:
-        self.object_permission_repository = repositories.object_permission
+        super().__init__(repository=repository)
         self.enforcer = enforcer
 
     @transactional
@@ -53,7 +55,7 @@ class ObjectPermissionService:
 
         Idempotent: re-granting an already-active row simply returns it.
         """
-        existing = await self.object_permission_repository.find_active(
+        existing = await self.repository.find_active(
             session,
             user_id=user_id,
             resource=resource,
@@ -64,7 +66,7 @@ class ObjectPermissionService:
             return existing
 
         try:
-            grant = await self.object_permission_repository.add(
+            grant = await self.repository.add(
                 session,
                 data={
                     "user_id": user_id,
@@ -81,7 +83,6 @@ class ObjectPermissionService:
             ) from exc
 
         await self.enforcer.add_policy(user_sub(user_id), instance_obj(resource, object_id), action)
-        await self.enforcer.save_policy()
         logger.info(
             "ObjectPermissionService - grant - user={} {}:{}/{}",
             user_id,
@@ -105,7 +106,7 @@ class ObjectPermissionService:
 
         Returns ``True`` when a row was found and revoked, ``False`` otherwise.
         """
-        existing = await self.object_permission_repository.find_active(
+        existing = await self.repository.find_active(
             session,
             user_id=user_id,
             resource=resource,
@@ -115,10 +116,9 @@ class ObjectPermissionService:
         if existing is None:
             return False
 
-        await self.object_permission_repository.delete(session, item_id=existing.id)
+        await self.repository.delete(session, item_id=existing.id)
 
         await self.enforcer.remove_policy(user_sub(user_id), instance_obj(resource, object_id), action)
-        await self.enforcer.save_policy()
         logger.info(
             "ObjectPermissionService - revoke - user={} {}:{}/{}",
             user_id,

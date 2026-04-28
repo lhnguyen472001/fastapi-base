@@ -27,10 +27,15 @@ Casbin mapping (no domains):
 Transaction boundary note
 -------------------------
 
-Every mutating method calls ``self.enforcer.add_policy`` / ``save_policy``
-**inside** its ``@transactional`` block. This keeps the relational rows
-and the ``casbin_rule`` table in the same atomic unit — if Casbin writes
+Every mutating method calls ``self.enforcer.add_policy`` /
+``add_grouping_policy`` / ``remove_policy`` **inside** its
+``@transactional`` block. The Casbin SQLAlchemy adapter persists each
+rule itself, so we do not call ``enforcer.save_policy()`` (that would
+rewrite the entire ``casbin_rule`` table on every grant). Keeping the
+single-rule writes inside the transaction means the relational rows and
+the ``casbin_rule`` table commit as one atomic unit — if Casbin writes
 fail, the whole assignment rolls back and the two stores cannot drift.
+
 The tradeoff is lock contention: the Casbin adapter writes hold a row-
 lock on ``casbin_rule`` for the duration of the DB transaction. Under
 bulk grants (e.g. :meth:`GroupService.add_user_to_group` or
@@ -50,14 +55,12 @@ from apps.rbac.services._access import AccessService
 from apps.rbac.services._facade import RBACService
 from apps.rbac.services._group import GroupService
 from apps.rbac.services._object_permission import ObjectPermissionService
-from apps.rbac.services._repositories import RBACRepositories
 from apps.rbac.services._role_permission import RolePermissionService
 
 __all__ = [
     "AccessService",
     "GroupService",
     "ObjectPermissionService",
-    "RBACRepositories",
     "RBACService",
     "RolePermissionService",
 ]

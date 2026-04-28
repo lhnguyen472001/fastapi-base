@@ -1,6 +1,9 @@
 """Group creation + user/role membership management."""
 
+from __future__ import annotations
+
 import uuid
+from typing import TYPE_CHECKING
 
 import casbin
 from loguru import logger
@@ -15,7 +18,14 @@ from apps.rbac.exceptions import (
 )
 from apps.rbac.models import Group, GroupRole, UserGroup
 from apps.rbac.services._helpers import role_sub, user_sub
-from apps.rbac.services._repositories import RBACRepositories
+
+if TYPE_CHECKING:
+    from apps.rbac.repositories import (
+        GroupRepository,
+        GroupRoleRepository,
+        RoleRepository,
+        UserGroupRepository,
+    )
 
 
 class GroupService:
@@ -36,13 +46,16 @@ class GroupService:
     def __init__(
         self,
         *,
-        repositories: RBACRepositories,
+        group_repository: GroupRepository,
+        role_repository: RoleRepository,
+        user_group_repository: UserGroupRepository,
+        group_role_repository: GroupRoleRepository,
         enforcer: casbin.AsyncEnforcer,
     ) -> None:
-        self.group_repository = repositories.group
-        self.role_repository = repositories.role
-        self.user_group_repository = repositories.user_group
-        self.group_role_repository = repositories.group_role
+        self.group_repository = group_repository
+        self.role_repository = role_repository
+        self.user_group_repository = user_group_repository
+        self.group_role_repository = group_role_repository
         self.enforcer = enforcer
 
     @transactional

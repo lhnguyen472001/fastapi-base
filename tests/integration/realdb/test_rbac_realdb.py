@@ -24,7 +24,6 @@ from apps.rbac.services import (
     AccessService,
     GroupService,
     ObjectPermissionService,
-    RBACRepositories,
     RBACService,
     RolePermissionService,
 )
@@ -53,19 +52,33 @@ async def enforcer():
 
 @pytest_asyncio.fixture
 async def rbac_service(enforcer) -> RBACService:
-    repositories = RBACRepositories(
-        role=RoleRepository(),
-        permission=PermissionRepository(),
-        group=GroupRepository(),
-        role_permission=RolePermissionRepository(),
-        user_role=UserRoleRepository(),
-        user_group=UserGroupRepository(),
-        group_role=GroupRoleRepository(),
-        object_permission=ObjectPermissionRepository(),
+    role_repo = RoleRepository()
+    permission_repo = PermissionRepository()
+    group_repo = GroupRepository()
+    role_permission_repo = RolePermissionRepository()
+    user_role_repo = UserRoleRepository()
+    user_group_repo = UserGroupRepository()
+    group_role_repo = GroupRoleRepository()
+    object_permission_repo = ObjectPermissionRepository()
+
+    role_permission_service = RolePermissionService(
+        role_repository=role_repo,
+        permission_repository=permission_repo,
+        role_permission_repository=role_permission_repo,
+        user_role_repository=user_role_repo,
+        enforcer=enforcer,
     )
-    role_permission_service = RolePermissionService(repositories=repositories, enforcer=enforcer)
-    group_service = GroupService(repositories=repositories, enforcer=enforcer)
-    object_permission_service = ObjectPermissionService(repositories=repositories, enforcer=enforcer)
+    group_service = GroupService(
+        group_repository=group_repo,
+        role_repository=role_repo,
+        user_group_repository=user_group_repo,
+        group_role_repository=group_role_repo,
+        enforcer=enforcer,
+    )
+    object_permission_service = ObjectPermissionService(
+        repository=object_permission_repo,
+        enforcer=enforcer,
+    )
     return RBACService(
         role_permission_service=role_permission_service,
         group_service=group_service,

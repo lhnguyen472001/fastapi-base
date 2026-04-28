@@ -17,7 +17,6 @@ from apps.rbac.services import (
     AccessService,
     GroupService,
     ObjectPermissionService,
-    RBACRepositories,
     RBACService,
     RolePermissionService,
 )
@@ -46,32 +45,28 @@ class RBACContainer(containers.DeclarativeContainer):
     group_role_repository = providers.Factory(GroupRoleRepository)
     object_permission_repository = providers.Factory(ObjectPermissionRepository)
 
-    rbac_repositories = providers.Factory(
-        RBACRepositories,
-        role=role_repository,
-        permission=permission_repository,
-        group=group_repository,
-        role_permission=role_permission_repository,
-        user_role=user_role_repository,
-        user_group=user_group_repository,
-        group_role=group_role_repository,
-        object_permission=object_permission_repository,
-    )
-
-    # Focused write services (3.3 split).
+    # Focused write services — each is wired with only the repositories it
+    # actually depends on (ISP). The legacy ``RBACRepositories`` bundle was
+    # removed in Phase 1 #10.
     role_permission_service = providers.Factory(
         RolePermissionService,
-        repositories=rbac_repositories,
+        role_repository=role_repository,
+        permission_repository=permission_repository,
+        role_permission_repository=role_permission_repository,
+        user_role_repository=user_role_repository,
         enforcer=enforcer,
     )
     group_service = providers.Factory(
         GroupService,
-        repositories=rbac_repositories,
+        group_repository=group_repository,
+        role_repository=role_repository,
+        user_group_repository=user_group_repository,
+        group_role_repository=group_role_repository,
         enforcer=enforcer,
     )
     object_permission_service = providers.Factory(
         ObjectPermissionService,
-        repositories=rbac_repositories,
+        repository=object_permission_repository,
         enforcer=enforcer,
     )
 
