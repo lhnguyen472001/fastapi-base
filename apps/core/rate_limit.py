@@ -48,7 +48,7 @@ async def rate_limit_exceeded_handler(request: Request, exc: Exception) -> ORJSO
     )
     response = ORJSONResponse(
         content=body.model_dump(),
-        status_code=429,
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
     )
     response.headers["Retry-After"] = str(getattr(exc, "retry_after", 60))
     return response

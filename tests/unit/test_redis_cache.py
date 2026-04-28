@@ -15,8 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from apps.core.redis import CacheManager
-from apps.core.redis.cache import _INVALIDATE_BATCH_SIZE
-
+from apps.core.redis.constants import INVALIDATE_BATCH_SIZE
 
 pytestmark = pytest.mark.unit
 
@@ -183,14 +182,14 @@ class TestInvalidatePattern:
     @pytest.mark.asyncio
     async def test_batches_when_over_threshold(self) -> None:
         redis = _make_redis_mock()
-        keys = [f"k{i}" for i in range(_INVALIDATE_BATCH_SIZE + 5)]
+        keys = [f"k{i}" for i in range(INVALIDATE_BATCH_SIZE + 5)]
 
         async def _gen():
             for k in keys:
                 yield k
 
         redis.scan_iter = MagicMock(return_value=_gen())
-        redis.delete = AsyncMock(return_value=_INVALIDATE_BATCH_SIZE)
+        redis.delete = AsyncMock(return_value=INVALIDATE_BATCH_SIZE)
         cache = CacheManager(redis_client=redis)
 
         await cache.invalidate_pattern("k*")
@@ -213,7 +212,7 @@ class TestCachedDecorator:
     async def test_miss_then_hit_round_trip(self) -> None:
         redis = _make_redis_mock()
         store: dict[str, str] = {}
-        redis.get = AsyncMock(side_effect=lambda k: store.get(k))
+        redis.get = AsyncMock(side_effect=store.get)
         redis.set = AsyncMock(
             side_effect=lambda k, v, ex=None: store.update({k: v}) or True,
         )
@@ -286,7 +285,7 @@ class TestBuildCacheKey:
 
 class TestGetRedisClient:
     def test_returns_none_when_disabled(self) -> None:
-        from apps.core.redis import client as rc
+        from apps.core.redis import client as rc  # noqa: PLC0415 — needed to mutate the singleton state
 
         rc._redis_client = None
         rc.app_settings.redis.enabled = False

@@ -23,11 +23,10 @@ from typing import Any, ParamSpec, TypeVar
 from loguru import logger
 
 from .client import RedisClient
+from .constants import INVALIDATE_BATCH_SIZE
 
 P = ParamSpec("P")
 R = TypeVar("R")
-
-_INVALIDATE_BATCH_SIZE = 500
 
 
 class CacheManager:
@@ -111,7 +110,7 @@ class CacheManager:
         batch: list[str] = []
         async for key in self.redis.scan_iter(match=pattern):
             batch.append(key)
-            if len(batch) >= _INVALIDATE_BATCH_SIZE:
+            if len(batch) >= INVALIDATE_BATCH_SIZE:
                 deleted += await self.redis.delete(*batch)
                 batch.clear()
         if batch:
