@@ -120,7 +120,7 @@ class AuthService:
             raise InvalidTokenError() from e
 
         user = await self.user_service.get_by_id(session, user_id=user_id)
-        if not self.two_factor_service.verify(user, totp_code):
+        if not await self.two_factor_service.verify(session, user=user, totp_code=totp_code):
             raise InvalidTwoFactorCodeError()
 
         pair, _ = await self.token_service.issue_pair(session, user=user, user_agent=user_agent, ip_address=ip_address)

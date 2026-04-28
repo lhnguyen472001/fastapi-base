@@ -83,6 +83,14 @@ class AuthSettings(BaseModel):
 
     # TOTP (2FA)
     totp_issuer: str = Field(default="FastAPI Base", description="Issuer name shown in authenticator apps")
+    totp_encryption_key: SecretStr = Field(
+        default=SecretStr(""),
+        description=(
+            "Fernet key (44 url-safe base64 chars) used to encrypt the TOTP "
+            "secret column at rest. REQUIRED in production; an empty value "
+            "in dev/test falls back to a deterministic per-process key."
+        ),
+    )
 
     # Google OAuth2
     google_client_id: str = Field(default="")
@@ -148,6 +156,44 @@ class ApplicationSettings(BaseSettings):
     auth: AuthSettings = Field(default_factory=AuthSettings, description="Auth settings")
     email: EmailSettings = Field(default_factory=EmailSettings, description="Email settings")
     rbac: RBACSettings = Field(default_factory=RBACSettings, description="RBAC / Casbin settings")
+
+    @model_validator(mode="after")
+    def _enforce_production_safety(self) -> "ApplicationSettings":
+        """Refuse to boot in production with default dev secrets or partial OAuth config.
+
+        Local dev keeps working because ``environment`` defaults to
+        ``"development"``; the production checks only fire when
+        ``ENVIRONMENT=production`` is set in the environment.
+
+        OAuth pairing is enforced regardless of environment: the Google
+        OAuth fields must be set together or omitted together. A half-
+        configured client silently breaks the callback flow, and the
+        check costs nothing.
+        """
+        if self.environment.lower() == "production" and self.db.password.get_secret_value() == _DEFAULT_DEV_DB_PASSWORD:
+            msg = (
+                "DB_PASSWORD is the default dev value but ENVIRONMENT=production. "
+                "Set DB_PASSWORD to the real production credential."
+            )
+            raise ValueError(msg)
+
+        if self.environment.lower() == "production" and not self.auth.totp_encryption_key.get_secret_value():
+            msg = (
+                "AUTH_TOTP_ENCRYPTION_KEY must be set in production. "
+                "Generate one with `uv run python scripts/generate_totp_key.py`."
+            )
+            raise ValueError(msg)
+
+        client_id = self.auth.google_client_id
+        client_secret = self.auth.google_client_secret.get_secret_value()
+        if bool(client_id) != bool(client_secret):
+            msg = (
+                "AUTH_GOOGLE_CLIENT_ID and AUTH_GOOGLE_CLIENT_SECRET must both be set "
+                "or both be empty; partial OAuth config breaks the Google callback."
+            )
+            raise ValueError(msg)
+
+        return self
 
 
 @functools.lru_cache

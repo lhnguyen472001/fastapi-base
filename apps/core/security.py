@@ -12,6 +12,7 @@ import base64
 import functools
 import hashlib
 import secrets
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -19,6 +20,8 @@ from typing import Any
 
 import bcrypt
 import jwt
+import pyotp
+from cryptography.fernet import Fernet
 from jwt.exceptions import ExpiredSignatureError, InvalidTokenError as PyJWTError
 
 from apps.auth.enums import TokenType
@@ -241,6 +244,79 @@ def compute_pkce_challenge(verifier: str) -> str:
     """
     digest = hashlib.sha256(verifier.encode("ascii")).digest()
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
+# --------------------------- TOTP (2FA) -------------------------------------
+
+
+_DEV_TOTP_KEY_SEED = b"dev-totp-fernet-key-DO-NOT-USE-IN-PROD"
+
+
+@functools.lru_cache(maxsize=1)
+def _load_totp_fernet() -> Fernet:
+    """Build the Fernet instance used to encrypt TOTP secrets at rest.
+
+    In production ``AUTH_TOTP_ENCRYPTION_KEY`` MUST be set (the settings
+    validator already refuses to boot otherwise). In dev/test we derive a
+    deterministic per-process key so the suite runs without forcing every
+    contributor to mint and persist a real key.
+    """
+    raw = app_settings.auth.totp_encryption_key.get_secret_value()
+    if raw:
+        return Fernet(raw.encode("ascii"))
+    derived = base64.urlsafe_b64encode(hashlib.sha256(_DEV_TOTP_KEY_SEED).digest())
+    return Fernet(derived)
+
+
+def encrypt_totp_secret(plaintext: str) -> str:
+    """Encrypt a base32 TOTP secret with Fernet (AES-128-CBC + HMAC-SHA256).
+
+    Returns the URL-safe base64 ciphertext (~100 chars) suitable for storage
+    in ``users.totp_secret`` (varchar(255)).
+    """
+    return _load_totp_fernet().encrypt(plaintext.encode("ascii")).decode("ascii")
+
+
+def decrypt_totp_secret(ciphertext: str) -> str:
+    """Decrypt a Fernet-encrypted TOTP secret back to its base32 plaintext.
+
+    Raises:
+        cryptography.fernet.InvalidToken: If the ciphertext is corrupted,
+            tampered, or was minted with a different key.
+    """
+    return _load_totp_fernet().decrypt(ciphertext.encode("ascii")).decode("ascii")
+
+
+def verify_totp_with_replay_guard(
+    *,
+    secret: str,
+    code: str,
+    last_counter: int | None,
+    valid_window: int = 1,
+) -> int | None:
+    """Verify a TOTP code AND ensure it has not been replayed.
+
+    Walks the ``valid_window`` neighbourhood of the current 30-second time
+    slice (per RFC 6238) and returns the matched counter when:
+      1. The presented code matches one of the candidate counters, and
+      2. That counter is strictly greater than ``last_counter`` (the
+         counter recorded for the user's most recent successful verify).
+
+    Returns ``None`` when the code does not match OR the matched counter
+    has already been consumed (replay).
+    """
+    totp = pyotp.TOTP(secret)
+    interval = totp.interval
+    now = int(time.time())
+    current_counter = now // interval
+    for offset in range(-valid_window, valid_window + 1):
+        candidate_counter = current_counter + offset
+        candidate_time = candidate_counter * interval
+        if pyotp.utils.strings_equal(code, totp.at(candidate_time)):
+            if last_counter is not None and candidate_counter <= last_counter:
+                return None
+            return candidate_counter
+    return None
 
 
 # --------------------------- email OTP --------------------------------------

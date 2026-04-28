@@ -3,11 +3,11 @@
 import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String
+from sqlalchemy import BigInteger, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from apps.core.database.model.base import UUIDAuditBase
 from apps.core.database.model import HasSoftDeletedMixin
+from apps.core.database.model.base import UUIDAuditBase
 from apps.core.database.types import DateTimeUTC
 
 if TYPE_CHECKING:
@@ -36,12 +36,18 @@ class User(UUIDAuditBase, HasSoftDeletedMixin):
     # when not null so two users cannot share the same Google account.
     google_sub: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True, index=True)
 
-    # TOTP-based 2FA. ``totp_secret`` is the base32 secret consumed by
-    # authenticator apps. ``is_2fa_enabled`` is a separate flag because we
-    # store the secret during setup but only enable it after the user proves
-    # they can generate a valid code.
-    totp_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # TOTP-based 2FA. ``totp_secret`` is the base32 secret used by
+    # authenticator apps, but stored encrypted at rest (Fernet ciphertext,
+    # ~100 chars — see ``apps.core.security.encrypt_totp_secret``).
+    # ``is_2fa_enabled`` is a separate flag because we store the secret
+    # during setup but only enable it after the user proves they can
+    # generate a valid code.
+    totp_secret: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_2fa_enabled: Mapped[bool] = mapped_column(default=False, nullable=False)
+    # Replay-guard: most recently consumed TOTP time-slice counter (Unix
+    # seconds / 30). Set on every successful enable / verify / disable so
+    # the same code cannot be presented twice within its 30s window.
+    last_totp_counter: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     refresh_tokens: Mapped[list["RefreshToken"]] = relationship(
         "RefreshToken",
@@ -52,4 +58,5 @@ class User(UUIDAuditBase, HasSoftDeletedMixin):
         "EmailVerification",
         back_populates="user",
         cascade="all, delete-orphan",
+        lazy="raise",
     )
