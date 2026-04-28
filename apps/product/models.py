@@ -13,10 +13,18 @@ from sqlalchemy.sql.sqltypes import (
     Text,
 )
 
-from apps.core.database.model.base import UUIDAuditBase
 from apps.core.database.model import HasSoftDeletedMixin
+from apps.core.database.model.base import UUIDAuditBase
+from apps.rbac.enums import ObjectAction
+from apps.rbac.registry import rbac_resource
 
 
+@rbac_resource(
+    "product_category",
+    actions=frozenset(
+        {ObjectAction.READ, ObjectAction.WRITE, ObjectAction.EDIT, ObjectAction.DELETE, ObjectAction.MANAGE}
+    ),
+)
 class ProductCategory(UUIDAuditBase, HasSoftDeletedMixin):
     """Product category — admin-managed taxonomy for products."""
 
@@ -33,6 +41,12 @@ class ProductCategory(UUIDAuditBase, HasSoftDeletedMixin):
     )
 
 
+@rbac_resource(
+    "product",
+    actions=frozenset(
+        {ObjectAction.READ, ObjectAction.WRITE, ObjectAction.EDIT, ObjectAction.DELETE, ObjectAction.MANAGE}
+    ),
+)
 class Product(UUIDAuditBase, HasSoftDeletedMixin):
     """Product sold by the farm (e.g. tea, rice, herbal goods)."""
 
@@ -89,6 +103,10 @@ class Product(UUIDAuditBase, HasSoftDeletedMixin):
     )
 
 
+@rbac_resource(
+    "product_image",
+    actions=frozenset({ObjectAction.READ, ObjectAction.WRITE, ObjectAction.DELETE, ObjectAction.MANAGE}),
+)
 class ProductImage(UUIDAuditBase):
     """Image attached to a product (external URL only)."""
 

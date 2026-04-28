@@ -9,11 +9,17 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from apps.core.database.model import HasSoftDeletedMixin
 from apps.core.database.model.base import UUIDAuditBase
 from apps.core.database.types import DateTimeUTC
+from apps.rbac.enums import ObjectAction
+from apps.rbac.registry import rbac_resource
 
 if TYPE_CHECKING:
     from apps.auth.models import EmailVerification, RefreshToken
 
 
+@rbac_resource(
+    "user",
+    actions=frozenset({ObjectAction.READ, ObjectAction.EDIT, ObjectAction.DELETE, ObjectAction.MANAGE}),
+)
 class User(UUIDAuditBase, HasSoftDeletedMixin):
     """User model.
 
