@@ -76,14 +76,14 @@ class _WriteRepositoryMixin(Generic[SQLAlchemyModelT]):
         expunge: bool | None = None,
         execution_options: ExecutableOptions | None = None,
     ) -> SQLAlchemyModelT | None:
-        """Update a record based on the provided data.
+        """Update a record by id.
 
-        Returns the updated model instance, or ``None`` if not found.
+        ``data`` may be a partial-update ``dict`` (only the listed keys are
+        copied) or a full model instance (every mapped column is copied —
+        full-replace semantics). Returns the updated model, or ``None`` when
+        the row does not exist.
         """
-        update_data = data if isinstance(data, dict) else None
-
-        if isinstance(data, dict):
-            data = self.model_type(**data)  # type: ignore[attr-defined]
+        update_dict = self._coerce_update_payload(data)
 
         existing_instance = await self.get_one_by_id(  # type: ignore[attr-defined]
             session,
@@ -91,19 +91,11 @@ class _WriteRepositoryMixin(Generic[SQLAlchemyModelT]):
             execution_options=execution_options,
             expunge=False,
         )
-
         if not existing_instance:
             return None
 
-        if update_data is not None:
-            for field_name, new_value in update_data.items():
-                if hasattr(existing_instance, field_name):
-                    setattr(existing_instance, field_name, new_value)
-        else:
-            for column in self.model_type.__table__.columns:  # type: ignore[attr-defined]
-                field_name = column.name
-                if hasattr(data, field_name):
-                    setattr(existing_instance, field_name, getattr(data, field_name))
+        for field_name, new_value in update_dict.items():
+            setattr(existing_instance, field_name, new_value)
 
         existing_instance = await self._attach_to_session(  # type: ignore[attr-defined]
             session,
@@ -117,6 +109,26 @@ class _WriteRepositoryMixin(Generic[SQLAlchemyModelT]):
             session.expunge(existing_instance)
 
         return existing_instance
+
+    def _coerce_update_payload(
+        self,
+        data: SQLAlchemyModelT | dict[str, Any],
+    ) -> dict[str, Any]:
+        """Normalise ``update`` input to a plain ``{column: value}`` dict.
+
+        Dict input is returned untouched (partial-update semantics). Model-
+        instance input is projected to a full ``{column: value}`` dict
+        across every mapped column on the model — preserving the historical
+        full-replace behaviour without the redundant
+        ``self.model_type(**data)`` round-trip.
+        """
+        if isinstance(data, dict):
+            return data
+        return {
+            column.name: getattr(data, column.name)
+            for column in self.model_type.__table__.columns  # type: ignore[attr-defined]
+            if hasattr(data, column.name)
+        }
 
     async def delete(
         self,
