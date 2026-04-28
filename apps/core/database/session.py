@@ -46,10 +46,10 @@ class RoutingSession(Session):
 
     def get_bind(
         self,
-        mapper: dict[str, Any] | None = None,
+        _mapper: dict[str, Any] | None = None,
         *,
         clause: ClauseElement | None = None,
-        **kw: Any,
+        **_kwargs: Any,
     ) -> Engine | Connection:
         """Route writes, locking selects, and in-flight transactions to the writer.
 
@@ -67,7 +67,7 @@ class RoutingSession(Session):
         return engine_factory(SQLAlchemyEngineTypes.READER).sync_engine
 
 
-_async_session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
+async_session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
     class_=AsyncSession,
     sync_session_class=RoutingSession,
     autoflush=False,
@@ -76,7 +76,7 @@ _async_session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
 )
 
 
-scoped_session = async_scoped_session(session_factory=_async_session_factory, scopefunc=get_session_ctx)
+scoped_session = async_scoped_session(session_factory=async_session_factory, scopefunc=get_session_ctx)
 
 
 def get_current_session() -> async_scoped_session[AsyncSession]:

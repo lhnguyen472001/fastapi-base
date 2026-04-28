@@ -27,19 +27,45 @@ class DatabaseSettings(BaseModel):
     driver: str = Field(default="asyncpg", description="Database driver")
     database_uri: URL = Field(default=None, description="Computed database URI")  # type: ignore[assignment]
 
+    # Optional read-replica connection. When ``reader_host`` is set, a
+    # second ``reader_uri`` is built and ``engine_factory(READER)`` will
+    # use it; otherwise the reader engine reuses the writer URI. Set
+    # ``DB_READER_HOST`` (and optionally ``DB_READER_PORT`` / ``_USER`` /
+    # ``_PASSWORD`` / ``_DATABASE``) in the environment to enable.
+    reader_host: str | None = Field(default=None, description="Read-replica host (optional)")
+    reader_port: int | None = Field(default=None, description="Read-replica port (defaults to ``port``)")
+    reader_user: str | None = Field(default=None, description="Read-replica user (defaults to ``user``)")
+    reader_password: SecretStr | None = Field(
+        default=None,
+        description="Read-replica password (defaults to ``password``)",
+    )
+    reader_database: str | None = Field(default=None, description="Read-replica database (defaults to ``database``)")
+    reader_uri: URL | None = Field(default=None, description="Computed read-replica URI; None if no replica configured")
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @model_validator(mode="after")
     def build_database_uri(self) -> "DatabaseSettings":
-        """Build the database URL from connection settings."""
+        """Build writer (and optional reader) URLs from connection settings."""
+        drivername = f"postgresql+{self.driver}" if "+" not in self.driver else self.driver
         self.database_uri = URL.create(
-            drivername=f"postgresql+{self.driver}" if "+" not in self.driver else self.driver,
+            drivername=drivername,
             username=self.user,
             password=self.password.get_secret_value(),
             host=self.host,
             port=self.port,
             database=self.database,
         )
+        if self.reader_host is not None:
+            reader_password = self.reader_password if self.reader_password is not None else self.password
+            self.reader_uri = URL.create(
+                drivername=drivername,
+                username=self.reader_user or self.user,
+                password=reader_password.get_secret_value(),
+                host=self.reader_host,
+                port=self.reader_port or self.port,
+                database=self.reader_database or self.database,
+            )
         return self
 
 
@@ -190,6 +216,9 @@ class EmailSettings(BaseModel):
     template_dir: Path = Field(default=Path("apps/core/email/templates"))
 
 
+_DEFAULT_DEV_DB_PASSWORD = "postgres"  # noqa: S105 — sentinel value compared against, not a real password
+
+
 class ApplicationSettings(BaseSettings):
     """Application settings."""
 
@@ -200,11 +229,15 @@ class ApplicationSettings(BaseSettings):
     )
 
     # Endpoint settings
-    host: str = Field(default="0.0.0.0", description="Host")
+    host: str = Field(default="0.0.0.0", description="Host")  # noqa: S104
     port: int = Field(default=8000, description="Port")
     reload: bool = Field(default=False, description="Reload")
     workers: int = Field(default=1, description="Workers")
     app_name: str = Field(default="FastAPI Base", description="Application display name")
+    environment: str = Field(
+        default="development",
+        description="Deployment environment: development | staging | production",
+    )
     cors_origins: list[str] = Field(
         default=["http://localhost:3000"],
         description="Allowed CORS origins (set via CORS_ORIGINS env var)",
