@@ -87,9 +87,12 @@ class PermissionService(SQLAlchemyService[Permission]):
         role = await self.role_repository.get_one_by_id(session, item_id=role_id)
         if role is None:
             raise RoleNotFoundError(message=f"Role {role_id} not found.")
-        perm = await self.repository.get_one_by_id(session, item_id=permission_id)
-        if perm is None:
-            raise PermissionNotFoundError(message=f"Permission {permission_id} not found.")
+        perm = await self._get_or_raise(
+            session,
+            item_id=permission_id,
+            error_cls=PermissionNotFoundError,
+            message=f"Permission {permission_id} not found.",
+        )
 
         try:
             link = await self.role_permission_repository.add(

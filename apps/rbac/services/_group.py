@@ -95,9 +95,12 @@ class GroupService(SQLAlchemyService[Group]):
         group_id: int,
         assigned_by: uuid.UUID | None = None,
     ) -> UserGroup:
-        group = await self.repository.get_one_by_id(session, item_id=group_id)
-        if group is None:
-            raise GroupNotFoundError(message=f"Group {group_id} not found.")
+        await self._get_or_raise(
+            session,
+            item_id=group_id,
+            error_cls=GroupNotFoundError,
+            message=f"Group {group_id} not found.",
+        )
 
         try:
             membership = await self.user_group_repository.add(
@@ -128,9 +131,12 @@ class GroupService(SQLAlchemyService[Group]):
         role_id: int,
         assigned_by: uuid.UUID | None = None,
     ) -> GroupRole:
-        group = await self.repository.get_one_by_id(session, item_id=group_id)
-        if group is None:
-            raise GroupNotFoundError(message=f"Group {group_id} not found.")
+        await self._get_or_raise(
+            session,
+            item_id=group_id,
+            error_cls=GroupNotFoundError,
+            message=f"Group {group_id} not found.",
+        )
         role = await self.role_repository.get_one_by_id(session, item_id=role_id)
         if role is None:
             raise RoleNotFoundError(message=f"Role {role_id} not found.")

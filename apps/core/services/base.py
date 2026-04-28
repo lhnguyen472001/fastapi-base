@@ -31,6 +31,7 @@ from apps.core.database.filters import StatementFilter
 from apps.core.database.repository import SQLAlchemyRepositoryProtocol
 from apps.core.database.transactional import transactional
 from apps.core.database.types import SessionType, SQLAlchemyModelT
+from apps.core.exceptions.base import BackendError
 from apps.core.schemas.base import SchemaT
 from apps.core.services.utils import ResultConverter
 
@@ -47,6 +48,29 @@ class BaseSQLAlchemyService(ResultConverter, Generic[SQLAlchemyModelT]):
             repository: Repository instance for data access.
         """
         self.repository = repository
+
+    async def _get_or_raise(
+        self,
+        session: SessionType,
+        *,
+        item_id: Any,
+        error_cls: type[BackendError],
+        message: str | None = None,
+    ) -> SQLAlchemyModelT:
+        """Fetch a single record by ID or raise the supplied domain error.
+
+        Replaces the recurring ``found = await repo.get_one_by_id(...); if
+        found is None: raise SomeNotFoundError(...)`` block. Subclasses pass
+        their domain-specific ``error_cls`` (e.g. ``UserNotFoundError``) and
+        an optional ``message``; otherwise a default ``"<Model> <id> not
+        found."`` is used.
+        """
+        instance = await self.repository.get_one_by_id(session, item_id=item_id)
+        if instance is None:
+            model_cls = getattr(type(self.repository), "model_type", None)
+            label = model_cls.__name__ if model_cls is not None else "Record"
+            raise error_cls(message=message or f"{label} {item_id} not found.")
+        return instance
 
 
 class SQLAlchemyReadService(BaseSQLAlchemyService[SQLAlchemyModelT], Generic[SQLAlchemyModelT]):  # type: ignore[type-arg]

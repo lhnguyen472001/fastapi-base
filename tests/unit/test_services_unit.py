@@ -287,3 +287,67 @@ def test_result_converter_paginated_response() -> None:
     assert paginated.total == 10
     assert paginated.limit == 5
     assert len(paginated.items) == 1
+
+
+# --------------------- BaseSQLAlchemyService._get_or_raise ------------------
+
+
+class _NotFoundError(Exception):
+    """Domain-style error mirroring the BackendError contract for tests."""
+
+    def __init__(self, *, code: str = "TEST001", status_code: int = 404, message: str) -> None:
+        self.code = code
+        self.status_code = status_code
+        self.message = message
+        super().__init__(message)
+
+
+def _make_service_with_repo(found_value: object | None) -> SQLAlchemyService:
+    repo = AsyncMock()
+    repo.get_one_by_id = AsyncMock(return_value=found_value)
+    return SQLAlchemyService(repository=repo)
+
+
+@pytest.mark.asyncio
+async def test_get_or_raise_returns_found_instance() -> None:
+    target = _DummyModel(name="ok")
+    service = _make_service_with_repo(target)
+
+    result = await service._get_or_raise(
+        AsyncMock(),
+        item_id=target.id,
+        error_cls=_NotFoundError,
+    )
+
+    assert result is target
+
+
+@pytest.mark.asyncio
+async def test_get_or_raise_raises_supplied_error_when_missing() -> None:
+    service = _make_service_with_repo(None)
+
+    with pytest.raises(_NotFoundError) as exc_info:
+        await service._get_or_raise(
+            AsyncMock(),
+            item_id=uuid.uuid4(),
+            error_cls=_NotFoundError,
+            message="custom message",
+        )
+
+    assert exc_info.value.message == "custom message"
+
+
+@pytest.mark.asyncio
+async def test_get_or_raise_default_message_includes_id() -> None:
+    service = _make_service_with_repo(None)
+    fake_id = "abc"
+
+    with pytest.raises(_NotFoundError) as exc_info:
+        await service._get_or_raise(
+            AsyncMock(),
+            item_id=fake_id,
+            error_cls=_NotFoundError,
+        )
+
+    assert "abc" in exc_info.value.message
+    assert "not found" in exc_info.value.message

@@ -79,9 +79,12 @@ class RoleService(SQLAlchemyService[Role]):
         role_id: int,
         assigned_by: uuid.UUID | None = None,
     ) -> UserRole:
-        role = await self.repository.get_one_by_id(session, item_id=role_id)
-        if role is None:
-            raise RoleNotFoundError(message=f"Role {role_id} not found.")
+        await self._get_or_raise(
+            session,
+            item_id=role_id,
+            error_cls=RoleNotFoundError,
+            message=f"Role {role_id} not found.",
+        )
 
         try:
             assignment = await self.user_role_repository.add(
