@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING
 
+from apps.auth.enums import TokenType
 from apps.auth.exceptions import (
     EmailNotVerifiedError,
     InvalidCredentialsError,
@@ -19,23 +19,20 @@ from apps.auth.schemas import (
     TokenPair,
     TwoFactorChallenge,
 )
+from apps.auth.services._email_verification import EmailVerificationService
+from apps.auth.services._oauth import OAuthService
+from apps.auth.services._tokens import TokenService
+from apps.auth.services._two_factor import TwoFactorService
+from apps.core.database.types import SessionType
 from apps.core.security import (
-    CHALLENGE_TOKEN_TYPE,
     TokenError,
     TokenExpiredError as CoreTokenExpiredError,
     create_challenge_token,
     decode_token,
     verify_password_async,
 )
-
-if TYPE_CHECKING:
-    from apps.auth.services._email_verification import EmailVerificationService
-    from apps.auth.services._oauth import OAuthService
-    from apps.auth.services._tokens import TokenService
-    from apps.auth.services._two_factor import TwoFactorService
-    from apps.core.database.types import SessionType
-    from apps.user.models import User
-    from apps.user.services import UserService
+from apps.user.models import User
+from apps.user.services import UserService
 
 
 class AuthService:
@@ -111,7 +108,7 @@ class AuthService:
     ) -> TokenPair:
         """Step 2 of password login — answer the 2FA challenge."""
         try:
-            payload = decode_token(challenge_token, expected_type=CHALLENGE_TOKEN_TYPE)
+            payload = decode_token(challenge_token, expected_type=TokenType.CHALLENGE)
         except CoreTokenExpiredError as e:
             raise TokenExpiredError() from e
         except TokenError as e:

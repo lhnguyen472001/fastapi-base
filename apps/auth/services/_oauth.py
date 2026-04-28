@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from apps.auth.enums import TokenType
 from apps.auth.exceptions import (
     OAuthEmailNotVerifiedError,
     OAuthStateExpiredError,
     OAuthStateInvalidError,
 )
 from apps.core.security import (
-    CHALLENGE_TOKEN_TYPE,
     TokenError,
     TokenExpiredError as CoreTokenExpiredError,
     create_challenge_token,
@@ -57,7 +57,7 @@ class OAuthService:
     def verify_state_token(self, state: str) -> None:
         """Validate a state token issued by :meth:`issue_state_token`."""
         try:
-            payload = decode_token(state, expected_type=CHALLENGE_TOKEN_TYPE)
+            payload = decode_token(state, expected_type=TokenType.CHALLENGE)
         except CoreTokenExpiredError as e:
             raise OAuthStateExpiredError() from e
         except TokenError as e:

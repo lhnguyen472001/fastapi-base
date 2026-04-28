@@ -41,8 +41,8 @@ from apps.auth.services import (
     TwoFactorService,
 )
 from apps.core.email import EmailRenderer, StubEmailSender
+from apps.auth.enums import TokenType
 from apps.core.security import (
-    REFRESH_TOKEN_TYPE,
     create_refresh_token,
     decode_token,
 )
@@ -370,8 +370,8 @@ async def test_refresh_with_access_token_type_rejected(real_session, auth_servic
 async def test_refresh_with_unknown_jwt_rejected(real_session, auth_service) -> None:
     """A signed-but-unknown refresh JWT must be rejected (no DB row exists)."""
     forged, _ = create_refresh_token(subject=str(uuid.uuid4()))
-    payload = decode_token(forged, expected_type=REFRESH_TOKEN_TYPE)
-    assert payload["type"] == REFRESH_TOKEN_TYPE  # token itself is valid
+    payload = decode_token(forged, expected_type=TokenType.REFRESH)
+    assert payload["type"] == TokenType.REFRESH  # token itself is valid
 
     with pytest.raises(RefreshTokenRevokedError):
         await auth_service.refresh(real_session, raw_refresh_token=forged)

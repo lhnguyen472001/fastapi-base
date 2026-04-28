@@ -1,5 +1,6 @@
 import functools
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -46,7 +47,10 @@ class AuthSettings(BaseModel):
     """Authentication and authorization settings."""
 
     # JWT (RS256 — public/private key files)
-    jwt_algorithm: str = Field(default="RS256", description="JWT signing algorithm")
+    jwt_algorithm: Literal["RS256"] = Field(
+        default="RS256",
+        description="JWT signing algorithm. Hard-pinned to RS256 to block RS256->HS256 confusion.",
+    )
     jwt_private_key_path: Path = Field(
         default=Path("./keys/jwt_private.pem"),
         description="Path to RSA private key (PEM)",
@@ -54,6 +58,14 @@ class AuthSettings(BaseModel):
     jwt_public_key_path: Path = Field(
         default=Path("./keys/jwt_public.pem"),
         description="Path to RSA public key (PEM)",
+    )
+    jwt_issuer: str = Field(
+        default="fastapi-base",
+        description="JWT 'iss' claim, verified on decode; tokens minted by other issuers are rejected.",
+    )
+    jwt_audience: str = Field(
+        default="fastapi-base",
+        description="JWT 'aud' claim, verified on decode; tokens minted for other audiences are rejected.",
     )
     access_token_expire_minutes: int = Field(default=15, ge=1)
     refresh_token_expire_days: int = Field(default=30, ge=1)

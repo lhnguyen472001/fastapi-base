@@ -6,6 +6,7 @@ import datetime
 import uuid
 from typing import TYPE_CHECKING
 
+from apps.auth.enums import TokenType
 from apps.auth.exceptions import (
     EmailNotVerifiedError,
     InvalidTokenError,
@@ -15,8 +16,6 @@ from apps.auth.exceptions import (
 from apps.auth.models import RefreshToken
 from apps.auth.schemas import TokenPair
 from apps.core.security import (
-    ACCESS_TOKEN_TYPE,
-    REFRESH_TOKEN_TYPE,
     TokenError,
     TokenExpiredError as CoreTokenExpiredError,
     create_access_token,
@@ -95,7 +94,7 @@ class TokenService:
     ) -> TokenPair:
         """Rotate a refresh token: revoke the old, issue a new pair."""
         try:
-            payload = decode_token(raw_refresh_token, expected_type=REFRESH_TOKEN_TYPE)
+            payload = decode_token(raw_refresh_token, expected_type=TokenType.REFRESH)
         except CoreTokenExpiredError as e:
             raise TokenExpiredError() from e
         except TokenError as e:
@@ -134,7 +133,7 @@ class TokenService:
     async def user_from_access_token(self, session: SessionType, *, token: str) -> User:
         """Decode an access token and return the corresponding active user."""
         try:
-            payload = decode_token(token, expected_type=ACCESS_TOKEN_TYPE)
+            payload = decode_token(token, expected_type=TokenType.ACCESS)
         except CoreTokenExpiredError as e:
             raise TokenExpiredError() from e
         except TokenError as e:
