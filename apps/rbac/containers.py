@@ -1,7 +1,5 @@
 """Dependency injection container for the RBAC module."""
 
-from __future__ import annotations
-
 from dependency_injector import containers, providers
 
 from apps.rbac.enforcer import create_enforcer
@@ -29,7 +27,7 @@ from apps.settings import app_settings
 class RBACContainer(containers.DeclarativeContainer):
     """Wires repositories, enforcer, and services for the RBAC module."""
 
-    wiring_config = containers.WiringConfiguration(modules=["apps.rbac.routes"])
+    wiring_config = containers.WiringConfiguration(modules=["apps.rbac.routes", "apps.rbac.dependencies"])
 
     # Async resource — must be initialized via ``container.init_resources()``
     # in the FastAPI lifespan handler.
