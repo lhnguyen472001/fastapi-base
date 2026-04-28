@@ -32,15 +32,9 @@ def upgrade() -> None:
         sa.Column("is_active", sa.Boolean(), nullable=False),
         sa.Column("id", sa.UUID(), nullable=False),
         sa.Column("sa_orm_sentinel", sa.Integer(), nullable=True),
-        sa.Column(
-            "created_at", apps.core.database.types.DateTimeUTC(), nullable=False
-        ),
-        sa.Column(
-            "updated_at", apps.core.database.types.DateTimeUTC(), nullable=False
-        ),
-        sa.Column(
-            "deleted_at", apps.core.database.types.DateTimeUTC(), nullable=True
-        ),
+        sa.Column("created_at", apps.core.database.types.DateTimeUTC(), nullable=False),
+        sa.Column("updated_at", apps.core.database.types.DateTimeUTC(), nullable=False),
+        sa.Column("deleted_at", apps.core.database.types.DateTimeUTC(), nullable=True),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_product_categorys")),
     )
     op.create_index(
@@ -49,9 +43,7 @@ def upgrade() -> None:
         ["display_order"],
         unique=False,
     )
-    op.create_index(
-        op.f("ix_product_categorys_slug"), "product_categorys", ["slug"], unique=True
-    )
+    op.create_index(op.f("ix_product_categorys_slug"), "product_categorys", ["slug"], unique=True)
     op.create_table(
         "products",
         sa.Column("name", sa.String(length=255), nullable=False),
@@ -68,15 +60,9 @@ def upgrade() -> None:
         sa.Column("search_vector", postgresql.TSVECTOR(), nullable=True),
         sa.Column("id", sa.UUID(), nullable=False),
         sa.Column("sa_orm_sentinel", sa.Integer(), nullable=True),
-        sa.Column(
-            "created_at", apps.core.database.types.DateTimeUTC(), nullable=False
-        ),
-        sa.Column(
-            "updated_at", apps.core.database.types.DateTimeUTC(), nullable=False
-        ),
-        sa.Column(
-            "deleted_at", apps.core.database.types.DateTimeUTC(), nullable=True
-        ),
+        sa.Column("created_at", apps.core.database.types.DateTimeUTC(), nullable=False),
+        sa.Column("updated_at", apps.core.database.types.DateTimeUTC(), nullable=False),
+        sa.Column("deleted_at", apps.core.database.types.DateTimeUTC(), nullable=True),
         sa.CheckConstraint(
             "retail_price >= 0",
             name=op.f("ck_products_ck_products_retail_price_non_negative"),
@@ -99,15 +85,9 @@ def upgrade() -> None:
         ["is_available", "category_id"],
         unique=False,
     )
-    op.create_index(
-        op.f("ix_products_category_id"), "products", ["category_id"], unique=False
-    )
-    op.create_index(
-        op.f("ix_products_is_available"), "products", ["is_available"], unique=False
-    )
-    op.create_index(
-        op.f("ix_products_is_featured"), "products", ["is_featured"], unique=False
-    )
+    op.create_index(op.f("ix_products_category_id"), "products", ["category_id"], unique=False)
+    op.create_index(op.f("ix_products_is_available"), "products", ["is_available"], unique=False)
+    op.create_index(op.f("ix_products_is_featured"), "products", ["is_featured"], unique=False)
     op.create_index(op.f("ix_products_name"), "products", ["name"], unique=False)
     op.create_index(
         "ix_products_search_vector",
@@ -126,12 +106,8 @@ def upgrade() -> None:
         sa.Column("is_primary", sa.Boolean(), nullable=False),
         sa.Column("id", sa.UUID(), nullable=False),
         sa.Column("sa_orm_sentinel", sa.Integer(), nullable=True),
-        sa.Column(
-            "created_at", apps.core.database.types.DateTimeUTC(), nullable=False
-        ),
-        sa.Column(
-            "updated_at", apps.core.database.types.DateTimeUTC(), nullable=False
-        ),
+        sa.Column("created_at", apps.core.database.types.DateTimeUTC(), nullable=False),
+        sa.Column("updated_at", apps.core.database.types.DateTimeUTC(), nullable=False),
         sa.ForeignKeyConstraint(
             ["product_id"],
             ["products.id"],
@@ -190,9 +166,7 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_product_images_product_id"), table_name="product_images")
     op.drop_table("product_images")
     op.drop_index(op.f("ix_products_slug"), table_name="products")
-    op.drop_index(
-        "ix_products_search_vector", table_name="products", postgresql_using="gin"
-    )
+    op.drop_index("ix_products_search_vector", table_name="products", postgresql_using="gin")
     op.drop_index(op.f("ix_products_name"), table_name="products")
     op.drop_index(op.f("ix_products_is_featured"), table_name="products")
     op.drop_index(op.f("ix_products_is_available"), table_name="products")
@@ -200,8 +174,6 @@ def downgrade() -> None:
     op.drop_index("ix_products_available_category", table_name="products")
     op.drop_table("products")
     op.drop_index(op.f("ix_product_categorys_slug"), table_name="product_categorys")
-    op.drop_index(
-        op.f("ix_product_categorys_display_order"), table_name="product_categorys"
-    )
+    op.drop_index(op.f("ix_product_categorys_display_order"), table_name="product_categorys")
     op.drop_table("product_categorys")
     # ### end Alembic commands ###

@@ -6,6 +6,8 @@ Create Date: 2026-04-09 20:47:20.699781
 
 """
 
+
+
 from __future__ import annotations
 
 import uuid
@@ -72,10 +74,7 @@ PRODUCTS = [
         "name": "Lavender Hoa Hồng",
         "slug": "lavender-hoa-hong",
         "category_id": CATEGORIES[1]["id"],
-        "ingredients": (
-            "Lavender, hoa hồng, bạc hà, sả chanh Pháp, hồng trà shan tuyết "
-            "300-500 năm tuổi, cỏ ngọt."
-        ),
+        "ingredients": ("Lavender, hoa hồng, bạc hà, sả chanh Pháp, hồng trà shan tuyết 300-500 năm tuổi, cỏ ngọt."),
         "production": (
             "Trà lavender hoa hồng được kết hợp từ 5 loại thảo mộc trồng tại "
             "khu vườn ôn đới Đà Lạt theo phương pháp thuần tự nhiên. Sản phẩm "
@@ -264,9 +263,7 @@ def downgrade() -> None:
     bind.execute(sa.delete(products_table).where(products_table.c.id.in_(product_ids)))
 
     category_ids = [c["id"] for c in CATEGORIES]
-    bind.execute(
-        sa.delete(categories_table).where(categories_table.c.id.in_(category_ids))
-    )
+    bind.execute(sa.delete(categories_table).where(categories_table.c.id.in_(category_ids)))
 
     # Remove casbin rules
     for ptype, sub, obj, act in CASBIN_RULES:
