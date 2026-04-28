@@ -58,7 +58,7 @@ class Product(UUIDAuditBase, HasSoftDeletedMixin):
     production: Mapped[str | None] = mapped_column(Text, nullable=True)
     benefits: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # Pricing — VND only. wholesale_price NULL means "Liên hệ".
+    # Pricing — VND only. wholesale_price NULL means "contact us for pricing".
     retail_price: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     wholesale_price: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
 
