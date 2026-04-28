@@ -14,6 +14,7 @@ from apps.auth.services import (
     TwoFactorService,
 )
 from apps.core.email import EmailRenderer, SmtpEmailSender
+from apps.core.redis import CacheManager, get_redis_client
 from apps.settings import app_settings
 from apps.user.repositories import UserRepository
 from apps.user.services import UserService
@@ -54,12 +55,14 @@ class AuthContainer(containers.DeclarativeContainer):
         client_secret=app_settings.auth.google_client_secret.get_secret_value(),
         redirect_uri=app_settings.auth.google_redirect_uri,
     )
+    cache_manager = providers.Singleton(CacheManager, redis_client=providers.Callable(get_redis_client))
 
     # Auth sub-services (per 3.2 split).
     token_service = providers.Factory(
         TokenService,
         user_service=user_service,
         refresh_token_repository=refresh_token_repository,
+        cache=cache_manager,
     )
     email_verification_service = providers.Factory(
         EmailVerificationService,
