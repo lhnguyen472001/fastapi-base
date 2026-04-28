@@ -8,6 +8,7 @@ All cryptographic configuration (key paths, TTLs, OTP length) is read from
 from __future__ import annotations
 
 import asyncio
+import base64
 import functools
 import hashlib
 import secrets
@@ -157,6 +158,21 @@ def create_challenge_token(*, subject: str) -> str:
     )
 
 
+def create_oauth_state_token(*, state_id: str, code_verifier: str) -> str:
+    """Sign a short-lived OAuth state token bound to a session cookie + PKCE verifier.
+
+    The ``sid`` claim must match the value stored in the companion HttpOnly
+    cookie set by ``/oauth/google/authorize``; the ``cv`` claim is the PKCE
+    code_verifier used to redeem the authorization code on callback.
+    """
+    return _create_token(
+        subject="oauth_state",
+        token_type=TokenType.OAUTH_STATE,
+        expires_in=timedelta(minutes=app_settings.auth.oauth_state_expire_minutes),
+        extra_claims={"sid": state_id, "cv": code_verifier},
+    )
+
+
 class TokenError(Exception):
     """Raised when a JWT cannot be decoded or fails validation."""
 
@@ -203,6 +219,28 @@ def decode_token(token: str, *, expected_type: str) -> dict[str, Any]:
 def hash_token(raw_token: str) -> str:
     """SHA-256 hex digest used for refresh token storage."""
     return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+
+# --------------------------- PKCE (RFC 7636) --------------------------------
+
+
+def generate_pkce_verifier() -> str:
+    """Generate a cryptographically random PKCE ``code_verifier`` (RFC 7636 §4.1).
+
+    Produces 86 URL-safe base64 characters drawn from the unreserved set
+    ``[A-Za-z0-9-._~]``, comfortably inside the 43-128 range required by
+    the spec.
+    """
+    return secrets.token_urlsafe(64)
+
+
+def compute_pkce_challenge(verifier: str) -> str:
+    """Compute the S256 ``code_challenge`` for a PKCE verifier (RFC 7636 §4.2).
+
+    ``code_challenge = BASE64URL-NOPAD(SHA256(ASCII(code_verifier)))``.
+    """
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
 # --------------------------- email OTP --------------------------------------

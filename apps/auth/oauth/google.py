@@ -38,12 +38,15 @@ class GoogleOAuthClient:
         self.client_secret = client_secret
         self.redirect_uri = redirect_uri
 
-    def build_authorize_url(self, *, state: str) -> str:
+    def build_authorize_url(self, *, state: str, code_challenge: str) -> str:
         """Build the Google consent screen URL.
 
         Args:
             state: Opaque random string the caller will validate on callback
                 to mitigate CSRF.
+            code_challenge: PKCE S256 challenge derived from a random
+                ``code_verifier`` held server-side; Google requires the
+                matching verifier on the token endpoint to redeem the code.
         """
         params = {
             "client_id": self.client_id,
@@ -54,11 +57,20 @@ class GoogleOAuthClient:
             "include_granted_scopes": "true",
             "prompt": "consent",
             "state": state,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
         }
         return f"{GOOGLE_AUTHORIZE_ENDPOINT}?{urlencode(params)}"
 
-    async def exchange_code(self, *, code: str) -> GoogleUserInfo:
-        """Exchange an authorization code for an access token + userinfo."""
+    async def exchange_code(self, *, code: str, code_verifier: str) -> GoogleUserInfo:
+        """Exchange an authorization code for an access token + userinfo.
+
+        Args:
+            code: Authorization code returned by Google to the redirect URI.
+            code_verifier: PKCE verifier whose SHA-256 must match the
+                ``code_challenge`` sent to ``build_authorize_url``. Google
+                rejects the exchange if the values do not match.
+        """
         async with httpx.AsyncClient(timeout=10.0) as client:
             try:
                 token_response = await client.post(
@@ -67,6 +79,7 @@ class GoogleOAuthClient:
                         "client_id": self.client_id,
                         "client_secret": self.client_secret,
                         "code": code,
+                        "code_verifier": code_verifier,
                         "grant_type": "authorization_code",
                         "redirect_uri": self.redirect_uri,
                     },

@@ -15,3 +15,4 @@ class TokenType(enum.StrEnum):
     ACCESS = "access"
     REFRESH = "refresh"
     CHALLENGE = "2fa_challenge"
+    OAUTH_STATE = "oauth_state"

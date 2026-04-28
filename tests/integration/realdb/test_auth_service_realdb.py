@@ -440,8 +440,13 @@ async def test_google_callback_creates_new_user(real_session, auth_service, goog
     )
     respx.get(GOOGLE_USERINFO_ENDPOINT).mock(return_value=httpx.Response(200, json=google_userinfo_payload))
 
-    state = auth_service.issue_oauth_state_token()
-    result = await auth_service.google_callback(real_session, code="g-auth-code", state=state)
+    flow = auth_service.start_google_oauth()
+    result = await auth_service.google_callback(
+        real_session,
+        code="g-auth-code",
+        state=flow.state_token,
+        cookie_state_id=flow.state_id,
+    )
     await real_session.flush()
 
     assert isinstance(result, TokenPair)
@@ -477,8 +482,13 @@ async def test_google_callback_links_existing_user(
     )
     respx.get(GOOGLE_USERINFO_ENDPOINT).mock(return_value=httpx.Response(200, json=google_userinfo_payload))
 
-    state = auth_service.issue_oauth_state_token()
-    result = await auth_service.google_callback(real_session, code="g-auth-code", state=state)
+    flow = auth_service.start_google_oauth()
+    result = await auth_service.google_callback(
+        real_session,
+        code="g-auth-code",
+        state=flow.state_token,
+        cookie_state_id=flow.state_id,
+    )
     await real_session.flush()
 
     assert isinstance(result, TokenPair)
@@ -493,19 +503,52 @@ async def test_google_callback_with_token_endpoint_failure_raises(real_session, 
 
     respx.post(GOOGLE_TOKEN_ENDPOINT).mock(return_value=httpx.Response(400, json={"error": "invalid_grant"}))
 
-    state = auth_service.issue_oauth_state_token()
+    flow = auth_service.start_google_oauth()
     with pytest.raises(OAuthProviderError):
-        await auth_service.google_callback(real_session, code="bad-code", state=state)
+        await auth_service.google_callback(
+            real_session,
+            code="bad-code",
+            state=flow.state_token,
+            cookie_state_id=flow.state_id,
+        )
 
 
 async def test_google_callback_with_invalid_state_rejected(real_session, auth_service) -> None:
     with pytest.raises(OAuthStateInvalidError):
-        await auth_service.google_callback(real_session, code="g-auth-code", state="not-a-real-state")
+        await auth_service.google_callback(
+            real_session,
+            code="g-auth-code",
+            state="not-a-real-state",
+            cookie_state_id="some-cookie-id",
+        )
 
 
-def test_google_authorize_url_contains_client_id_and_state(auth_service) -> None:
-    state = auth_service.issue_oauth_state_token()
-    url = auth_service.google_authorize_url(state=state)
-    assert "client_id=test-client-id" in url
-    assert "state=" in url
-    assert "scope=openid+email+profile" in url
+async def test_google_callback_rejects_missing_cookie(real_session, auth_service) -> None:
+    flow = auth_service.start_google_oauth()
+    with pytest.raises(OAuthStateInvalidError):
+        await auth_service.google_callback(
+            real_session,
+            code="g-auth-code",
+            state=flow.state_token,
+            cookie_state_id=None,
+        )
+
+
+async def test_google_callback_rejects_mismatched_cookie(real_session, auth_service) -> None:
+    flow = auth_service.start_google_oauth()
+    with pytest.raises(OAuthStateInvalidError):
+        await auth_service.google_callback(
+            real_session,
+            code="g-auth-code",
+            state=flow.state_token,
+            cookie_state_id="not-the-right-state-id",
+        )
+
+
+def test_google_authorize_url_contains_client_id_and_pkce(auth_service) -> None:
+    flow = auth_service.start_google_oauth()
+    assert "client_id=test-client-id" in flow.authorize_url
+    assert "state=" in flow.authorize_url
+    assert "scope=openid+email+profile" in flow.authorize_url
+    assert "code_challenge=" in flow.authorize_url
+    assert "code_challenge_method=S256" in flow.authorize_url

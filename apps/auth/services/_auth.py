@@ -20,7 +20,7 @@ from apps.auth.schemas import (
     TwoFactorChallenge,
 )
 from apps.auth.services._email_verification import EmailVerificationService
-from apps.auth.services._oauth import OAuthService
+from apps.auth.services._oauth import OAuthFlowStart, OAuthService
 from apps.auth.services._tokens import TokenService
 from apps.auth.services._two_factor import TwoFactorService
 from apps.core.database.types import SessionType
@@ -173,14 +173,14 @@ class AuthService:
 
     # ----------------------------- Google OAuth ----------------------------
 
-    def google_authorize_url(self, *, state: str) -> str:
-        return self.oauth_service.authorize_url(state=state)
+    def start_google_oauth(self) -> OAuthFlowStart:
+        """Build the Google authorize URL plus the state JWT and cookie id.
 
-    def issue_oauth_state_token(self) -> str:
-        return self.oauth_service.issue_state_token()
-
-    def verify_oauth_state_token(self, state: str) -> None:
-        self.oauth_service.verify_state_token(state)
+        The route handler is responsible for setting the cookie keyed by
+        ``OAUTH_STATE_COOKIE_NAME`` to ``state_id`` and returning
+        ``authorize_url`` / ``state_token`` to the client.
+        """
+        return self.oauth_service.start_authorize_flow()
 
     async def google_callback(
         self,
@@ -188,11 +188,17 @@ class AuthService:
         *,
         code: str,
         state: str,
+        cookie_state_id: str | None,
         user_agent: str | None = None,
         ip_address: str | None = None,
     ) -> TokenPair | TwoFactorChallenge:
         """Exchange a Google authorization code and either log in or register."""
-        user = await self.oauth_service.exchange_code_and_link(session, code=code, state=state)
+        user = await self.oauth_service.exchange_code_and_link(
+            session,
+            code=code,
+            state=state,
+            cookie_state_id=cookie_state_id,
+        )
 
         if user.is_2fa_enabled:
             challenge_token = create_challenge_token(subject=str(user.id))

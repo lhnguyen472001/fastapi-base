@@ -1,11 +1,8 @@
 """Auth endpoints: register, verify, login, 2FA, refresh, logout, OAuth, me."""
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, Request, Response, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.auth.containers import AuthContainer
 from apps.auth.dependencies import get_current_user
@@ -26,19 +23,17 @@ from apps.auth.schemas import (
     TwoFactorChallenge,
     VerifyEmailRequest,
 )
+from apps.auth.services import AuthService
+from apps.auth.services._oauth import OAUTH_STATE_COOKIE_NAME
 from apps.core.database.session import session_factory
 from apps.core.schemas.response import (
     APIResponse,
     JsonResponseStatuses,
     ResponseCodes,
 )
+from apps.settings import app_settings
+from apps.user.models import User
 from apps.user.schemas import UserResponse
-
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
-
-    from apps.auth.services import AuthService
-    from apps.user.models import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -269,19 +264,35 @@ async def disable_2fa(
 # ------------------------------- Google OAuth ------------------------------
 
 
+_OAUTH_COOKIE_PATH = "/api/v1/auth/oauth/google"
+
+
+def _is_production() -> bool:
+    return app_settings.environment.lower() == "production"
+
+
 @router.get(
     "/oauth/google/authorize",
     response_model=APIResponse[GoogleAuthorizeResponse],
 )
 @inject
 async def google_authorize(
+    response: Response,
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
 ) -> APIResponse[GoogleAuthorizeResponse]:
-    state = auth_service.issue_oauth_state_token()
-    url = auth_service.google_authorize_url(state=state)
+    flow = auth_service.start_google_oauth()
+    response.set_cookie(
+        key=OAUTH_STATE_COOKIE_NAME,
+        value=flow.state_id,
+        max_age=app_settings.auth.oauth_state_expire_minutes * 60,
+        httponly=True,
+        secure=_is_production(),
+        samesite="lax",
+        path=_OAUTH_COOKIE_PATH,
+    )
     return APIResponse[GoogleAuthorizeResponse](
         code=ResponseCodes.API000,
-        data=GoogleAuthorizeResponse(authorize_url=url, state=state),
+        data=GoogleAuthorizeResponse(authorize_url=flow.authorize_url, state=flow.state_token),
         status=JsonResponseStatuses.SUCCESS,
         message="Google authorization URL generated.",
     )
@@ -296,17 +307,23 @@ async def google_callback(
     code: str,
     state: str,
     request: Request,
+    response: Response,
     session: AsyncSession = Depends(session_factory),
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
 ) -> APIResponse[TokenPair | TwoFactorChallenge]:
     user_agent, ip_address = _client_metadata(request)
-    result = await auth_service.google_callback(
-        session,
-        code=code,
-        state=state,
-        user_agent=user_agent,
-        ip_address=ip_address,
-    )
+    cookie_state_id = request.cookies.get(OAUTH_STATE_COOKIE_NAME)
+    try:
+        result = await auth_service.google_callback(
+            session,
+            code=code,
+            state=state,
+            cookie_state_id=cookie_state_id,
+            user_agent=user_agent,
+            ip_address=ip_address,
+        )
+    finally:
+        response.delete_cookie(key=OAUTH_STATE_COOKIE_NAME, path=_OAUTH_COOKIE_PATH)
     return APIResponse[TokenPair | TwoFactorChallenge](
         code=ResponseCodes.API000,
         data=result,

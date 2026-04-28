@@ -70,6 +70,11 @@ class AuthSettings(BaseModel):
     access_token_expire_minutes: int = Field(default=15, ge=1)
     refresh_token_expire_days: int = Field(default=30, ge=1)
     challenge_token_expire_minutes: int = Field(default=5, ge=1, description="Lifetime of the 2FA challenge JWT")
+    oauth_state_expire_minutes: int = Field(
+        default=5,
+        ge=1,
+        description="Lifetime of the signed OAuth state JWT (and its companion HttpOnly cookie).",
+    )
 
     # OTP (email verification)
     otp_length: int = Field(default=6, ge=4, le=10)
