@@ -110,7 +110,6 @@ select = [
     "ICN",    # flake8-import-conventions
     "T20",    # flake8-print (forbid print())
     "Q",      # flake8-quotes
-    "ARG",    # flake8-unused-arguments
     "ERA",    # eradicate (no commented-out code)
 ]
 ignore = [
@@ -131,7 +130,6 @@ ignore = [
     "S105",    # hardcoded password in fixtures
     "S106",    # hardcoded password in fixtures
     "PLR2004", # magic values in tests
-    "ARG",     # unused args (fixtures)
 ]
 "alembic/**/*.py" = ["ALL"]
 "apps/__main__.py" = ["T20"]
