@@ -2,14 +2,10 @@
 
 import functools
 from collections.abc import Awaitable, Callable
-from typing import ParamSpec, TypeVar
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_scoped_session
 
 from .types import SessionType
-
-P = ParamSpec("P")
-R = TypeVar("R")
 
 
 def _extract_session(args: tuple, kwargs: dict) -> SessionType:
