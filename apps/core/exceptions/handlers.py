@@ -50,6 +50,7 @@ def backend_exception_handler(_: Request, exc: BackendError) -> ORJSONResponse:
             "status": exc.status,
             "message": exc.message,
         },
+        background=exc.background_task,
     )
 
 
