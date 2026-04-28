@@ -130,6 +130,31 @@ class RBACSettings(BaseModel):
     )
 
 
+class RedisSettings(BaseModel):
+    """Redis connection settings (cache, distributed locks, etc.).
+
+    The module is a no-op when ``enabled=False`` — ``get_redis_client()``
+    returns ``None`` and ``CacheManager`` short-circuits every call. Flip
+    on once Redis is reachable from the app process.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description="Master switch — disable to bypass Redis entirely (dev / tests without Redis).",
+    )
+    host: str = Field(default="localhost", description="Redis host")
+    port: int = Field(default=6379, description="Redis port")
+    database: int = Field(default=0, ge=0, description="Redis logical database index")
+    password: SecretStr | None = Field(default=None, description="Redis password (optional)")
+    max_connections: int = Field(default=20, ge=1, description="Connection pool size")
+    socket_timeout: float = Field(default=5.0, gt=0, description="Per-operation socket timeout (seconds)")
+    socket_connect_timeout: float = Field(default=5.0, gt=0, description="Connection establish timeout (seconds)")
+    decode_responses: bool = Field(
+        default=True,
+        description="Auto-decode bytes -> str. Required for the JSON-based CacheManager.",
+    )
+
+
 class RateLimitSettings(BaseModel):
     """Per-process rate-limiting settings (slowapi)."""
 
@@ -190,6 +215,7 @@ class ApplicationSettings(BaseSettings):
     email: EmailSettings = Field(default_factory=EmailSettings, description="Email settings")
     rbac: RBACSettings = Field(default_factory=RBACSettings, description="RBAC / Casbin settings")
     rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings, description="Rate-limit settings")
+    redis: RedisSettings = Field(default_factory=RedisSettings, description="Redis settings")
 
     @model_validator(mode="after")
     def _enforce_production_safety(self) -> "ApplicationSettings":
