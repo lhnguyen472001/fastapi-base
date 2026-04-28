@@ -30,6 +30,7 @@ from pathlib import Path
 
 import casbin
 from casbin_async_sqlalchemy_adapter import Adapter
+from casbin_redis_watcher import new_watcher
 from loguru import logger
 
 RBAC_MODEL_PATH = Path(__file__).parent / "casbin" / "rbac_model.conf"
@@ -65,24 +66,12 @@ async def create_enforcer(
 
 
 def _attach_redis_watcher(enforcer: casbin.AsyncEnforcer, redis_url: str) -> None:
-    """Attach a Redis pub/sub watcher if the optional dependency is installed.
+    """Attach a Redis pub/sub watcher to broadcast policy mutations.
 
-    The import is deferred so the ``casbin-redis-watcher`` package only needs
-    to be present when a deployment actually enables the watcher URL. A
-    missing package logs a warning and keeps the enforcer watcher-less
-    (safe for single-worker runs, unsafe for multi-worker).
+    Each worker holds an independent in-memory enforcer; the watcher
+    invalidates every other worker's enforcer on policy mutation, so
+    role / permission changes converge in real time.
     """
-    try:
-        from casbin_redis_watcher import new_watcher  # type: ignore[import-not-found]
-    except ImportError:
-        logger.warning(
-            "create_enforcer - watcher_redis_url is set but "
-            "'casbin-redis-watcher' is not installed; running without a "
-            "watcher. Install it or unset the URL before running with "
-            "--workers >1."
-        )
-        return
-
     watcher = new_watcher(redis_url)
     enforcer.set_watcher(watcher)
     logger.info("create_enforcer - Casbin Redis watcher attached at {url}", url=redis_url)

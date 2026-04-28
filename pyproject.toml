@@ -11,6 +11,7 @@ dependencies = [
     "bcrypt>=5.0.0",
     "casbin>=1.43.0",
     "casbin-async-sqlalchemy-adapter>=1.17.0",
+    "casbin-redis-watcher>=1.0.0",
     "dependency-injector>=4.49.0",
     "fastapi[standard]>=0.135.2",
     "httpx>=0.28.1",

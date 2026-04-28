@@ -8,13 +8,12 @@ The module-level :data:`app` is what ``uvicorn`` imports.
 """
 
 from collections.abc import AsyncIterator
-
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import ORJSONResponse, RedirectResponse
 from loguru import logger
 
 from apps.auth.routes import router as auth_router
@@ -33,9 +32,26 @@ from apps.rbac.routes import router as rbac_router
 from apps.settings import app_settings
 from apps.user.routes import router as user_router
 
-
-
 API_V1_PREFIX = "/api/v1"
+
+
+def _check_rbac_multi_worker_safety() -> None:
+    """Refuse to boot when multi-worker is configured without a Casbin watcher.
+
+    Each worker holds an independent in-memory Casbin enforcer. Without a
+    Redis watcher to broadcast policy mutations, RBAC decisions diverge
+    across workers (a role granted on worker A is invisible to worker B
+    until B reloads its enforcer). Failing fast is safer than silently
+    serving inconsistent authorization decisions.
+    """
+    if app_settings.workers > 1 and not app_settings.rbac.watcher_redis_url:
+        msg = (
+            f"WORKERS={app_settings.workers} requires RBAC_WATCHER_REDIS_URL "
+            "to keep the Casbin enforcer consistent across processes. "
+            "Either set RBAC_WATCHER_REDIS_URL=redis://<host>:<port>/<db> "
+            "or run with WORKERS=1."
+        )
+        raise RuntimeError(msg)
 
 
 @asynccontextmanager
@@ -46,6 +62,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     explicitly initialized before any route can resolve it. We do that here
     so a missing database connection causes the app to fail-fast at startup.
     """
+    _check_rbac_multi_worker_safety()
     logger.info("factory - lifespan - Initializing RBAC resources")
     await rbac_container.init_resources()  # type: ignore[func-returns-value]
     logger.info("factory - lifespan - Application started")

@@ -25,6 +25,20 @@ services:
       - "1025:1025"  # SMTP listener (no auth, no TLS)
       - "8025:8025"  # Web UI + JSON HTTP API
 
+  redis:
+    image: redis:7-alpine
+    container_name: fastapi-base-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   api:
     build:
       context: .
@@ -36,6 +50,8 @@ services:
         condition: service_healthy
       mailhog:
         condition: service_started
+      redis:
+        condition: service_healthy
     environment:
       # Endpoint
       HOST: 0.0.0.0
@@ -53,6 +69,10 @@ services:
       EMAIL_SMTP_HOST: mailhog
       EMAIL_SMTP_PORT: 1025
       EMAIL_SMTP_USE_TLS: "false"
+      # RBAC — Casbin Redis watcher (REQUIRED when WORKERS > 1).
+      # Each worker holds an in-memory enforcer; the watcher broadcasts
+      # policy mutations across workers via Redis pub/sub.
+      RBAC_WATCHER_REDIS_URL: redis://redis:6379/0
     ports:
       - "8000:8000"
     volumes:
@@ -90,4 +110,5 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:
   localstack_data:
