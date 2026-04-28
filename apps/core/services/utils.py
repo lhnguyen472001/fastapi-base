@@ -25,6 +25,7 @@ class ResultConverter:
 
     # Cache TypeAdapter instances for reuse across conversions
     _adapter_cache: ClassVar[dict[type[BaseObjectSchema], TypeAdapter[Any]]] = {}
+    _list_adapter_cache: ClassVar[dict[type[BaseObjectSchema], TypeAdapter[Any]]] = {}
 
     @classmethod
     def _get_adapter(cls, schema_type: type[SchemaT]) -> TypeAdapter[SchemaT]:
@@ -33,6 +34,15 @@ class ResultConverter:
         if adapter is None:
             adapter = TypeAdapter(schema_type)
             cls._adapter_cache[schema_type] = adapter
+        return adapter
+
+    @classmethod
+    def _get_list_adapter(cls, schema_type: type[SchemaT]) -> TypeAdapter[list[SchemaT]]:
+        """Return a cached TypeAdapter for ``list[schema_type]``."""
+        adapter = cls._list_adapter_cache.get(schema_type)
+        if adapter is None:
+            adapter = TypeAdapter(list[schema_type])  # type: ignore[valid-type]
+            cls._list_adapter_cache[schema_type] = adapter
         return adapter
 
     def _convert_single(self, data: DataT, schema_type: type[SchemaT]) -> SchemaT:
@@ -76,7 +86,7 @@ class ResultConverter:
             return []
 
         try:
-            list_adapter = TypeAdapter(list[schema_type])  # type: ignore[valid-type]
+            list_adapter = self._get_list_adapter(schema_type)
             return list_adapter.validate_python(data)
         except ValidationError:
             items = []

@@ -14,6 +14,7 @@ import pyotp
 import pytest
 import respx
 
+from apps.auth.enums import TokenType
 from apps.auth.exceptions import (
     EmailNotVerifiedError,
     InvalidCredentialsError,
@@ -33,6 +34,10 @@ from apps.auth.schemas import (
     TokenPair,
     TwoFactorChallenge,
 )
+from apps.auth.security import (
+    decode_token,
+    generate_refresh_token,
+)
 from apps.auth.services import (
     AuthService,
     EmailVerificationService,
@@ -41,11 +46,6 @@ from apps.auth.services import (
     TwoFactorService,
 )
 from apps.core.email import EmailRenderer, StubEmailSender
-from apps.auth.enums import TokenType
-from apps.auth.security import (
-    generate_refresh_token,
-    decode_token,
-)
 from apps.settings import app_settings
 from apps.user.repositories import UserRepository
 from apps.user.services import UserService
