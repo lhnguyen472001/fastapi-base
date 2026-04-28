@@ -48,8 +48,8 @@ class RolePermission(BigIntAuditBase):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
-    role: Mapped[Role] = relationship("Role", back_populates="permissions", lazy="select")
-    permission: Mapped[Permission] = relationship("Permission", back_populates="roles", lazy="select")
+    role: Mapped[Role] = relationship("Role", back_populates="permissions", lazy="raise")
+    permission: Mapped[Permission] = relationship("Permission", back_populates="roles", lazy="raise")
 
     def __repr__(self) -> str:
         return f"RolePermission(role_id={self.role_id}, permission_id={self.permission_id})"
@@ -80,7 +80,7 @@ class UserRole(BigIntAuditBase):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     conditions: Mapped[dict[str, Any] | None] = mapped_column(nullable=True)
 
-    role: Mapped[Role] = relationship("Role", back_populates="users", lazy="select")
+    role: Mapped[Role] = relationship("Role", back_populates="users", lazy="raise")
 
     def __repr__(self) -> str:
         return f"UserRole(user_id={self.user_id}, role_id={self.role_id})"
@@ -111,7 +111,7 @@ class UserGroup(BigIntAuditBase):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     role: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
-    group: Mapped[Group] = relationship("Group", back_populates="users", lazy="select")
+    group: Mapped[Group] = relationship("Group", back_populates="users", lazy="raise")
 
     def __repr__(self) -> str:
         return f"UserGroup(user_id={self.user_id}, group_id={self.group_id})"
@@ -142,8 +142,8 @@ class GroupRole(BigIntAuditBase):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     conditions: Mapped[dict[str, Any] | None] = mapped_column(nullable=True)
 
-    group: Mapped[Group] = relationship("Group", back_populates="roles", lazy="select")
-    role: Mapped[Role] = relationship("Role", lazy="select")
+    group: Mapped[Group] = relationship("Group", back_populates="roles", lazy="raise")
+    role: Mapped[Role] = relationship("Role", lazy="raise")
 
     def __repr__(self) -> str:
         return f"GroupRole(group_id={self.group_id}, role_id={self.role_id})"

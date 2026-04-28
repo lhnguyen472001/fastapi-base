@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import Boolean, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
-from apps.core.database.model.base import BigIntAuditBase
 from apps.core.database.model import HasSoftDeletedMixin
+from apps.core.database.model.base import BigIntAuditBase
 
 if TYPE_CHECKING:
     from apps.rbac.models._assignments import (
@@ -52,21 +52,21 @@ class Role(BigIntAuditBase):
         "RolePermission",
         back_populates="role",
         cascade="all, delete-orphan",
-        lazy="select",
+        lazy="raise",
     )
 
     children: Mapped[list[Role]] = relationship(
         "Role",
         back_populates="parent",
         cascade="all, delete-orphan",
-        lazy="select",
+        lazy="raise",
         foreign_keys="[Role.parent_id]",
     )
 
     parent: Mapped[Role | None] = relationship(
         "Role",
         back_populates="children",
-        lazy="select",
+        lazy="raise",
         remote_side="[Role.id]",
     )
 
@@ -74,7 +74,7 @@ class Role(BigIntAuditBase):
         "UserRole",
         back_populates="role",
         cascade="all, delete-orphan",
-        lazy="select",
+        lazy="raise",
     )
 
     def __repr__(self) -> str:
@@ -155,7 +155,7 @@ class Permission(BigIntAuditBase, HasSoftDeletedMixin):
         "RolePermission",
         back_populates="permission",
         cascade="all, delete-orphan",
-        lazy="select",
+        lazy="raise",
     )
 
     def __repr__(self) -> str:
@@ -189,28 +189,28 @@ class Group(BigIntAuditBase):
         "UserGroup",
         back_populates="group",
         cascade="all, delete-orphan",
-        lazy="select",
+        lazy="raise",
     )
 
     roles: Mapped[list[GroupRole]] = relationship(
         "GroupRole",
         back_populates="group",
         cascade="all, delete-orphan",
-        lazy="select",
+        lazy="raise",
     )
 
     children: Mapped[list[Group]] = relationship(
         "Group",
         back_populates="parent",
         cascade="all, delete-orphan",
-        lazy="select",
+        lazy="raise",
         foreign_keys="[Group.parent_id]",
     )
 
     parent: Mapped[Group | None] = relationship(
         "Group",
         back_populates="children",
-        lazy="select",
+        lazy="raise",
         remote_side="[Group.id]",
     )
 
