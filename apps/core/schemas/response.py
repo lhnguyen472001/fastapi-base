@@ -64,6 +64,22 @@ class APIResponse[ResponseObjectT: "ResponseObjectSchema"](BaseModel):
     status: JsonResponseStatuses = Field(default=JsonResponseStatuses.SUCCESS, description="Response status")
     message: str = Field(..., description="Response message")
 
+    @classmethod
+    def success(
+        cls,
+        *,
+        data: ResponseObjectT | None = None,
+        message: str = "Success",
+        code: str = ResponseCodes.API000,
+    ) -> "APIResponse[ResponseObjectT]":
+        """Build the canonical SUCCESS-status envelope.
+
+        Replaces the boilerplate ``APIResponse[T](code=API000, data=..., status=SUCCESS, message=...)``
+        construction at every route. The route's ``response_model=APIResponse[T]``
+        still pins the wire-format type at the FastAPI boundary.
+        """
+        return cls(code=code, data=data, status=JsonResponseStatuses.SUCCESS, message=message)
+
 
 class PaginatedResponse[ResponseObjectT: "ResponseObjectSchema"](ResponseObjectSchema):
     """Pagination schema for offset-based pagination."""

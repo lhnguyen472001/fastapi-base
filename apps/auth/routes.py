@@ -29,8 +29,6 @@ from apps.core.database.session import session_factory
 from apps.core.rate_limit import limiter
 from apps.core.schemas.response import (
     APIResponse,
-    JsonResponseStatuses,
-    ResponseCodes,
 )
 from apps.settings import app_settings
 from apps.user.models import User
@@ -62,11 +60,8 @@ async def register(
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
 ) -> APIResponse[RegisterResponse]:
     user = await auth_service.register(session, data=data)
-    return APIResponse[RegisterResponse](
-        code=ResponseCodes.API000,
-        data=RegisterResponse(user_id=user.id),
-        status=JsonResponseStatuses.SUCCESS,
-        message="Verification email sent.",
+    return APIResponse[RegisterResponse].success(
+        data=RegisterResponse(user_id=user.id), message="Verification email sent."
     )
 
 
@@ -80,11 +75,8 @@ async def verify_email(
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
 ) -> APIResponse[MessageResponse]:
     await auth_service.verify_email(session, email=data.email, code=data.code)
-    return APIResponse[MessageResponse](
-        code=ResponseCodes.API000,
-        data=MessageResponse(message="Email verified."),
-        status=JsonResponseStatuses.SUCCESS,
-        message="Email verified successfully.",
+    return APIResponse[MessageResponse].success(
+        data=MessageResponse(message="Email verified."), message="Email verified successfully."
     )
 
 
@@ -102,10 +94,8 @@ async def resend_verification(
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
 ) -> APIResponse[MessageResponse]:
     await auth_service.resend_verification(session, email=data.email)
-    return APIResponse[MessageResponse](
-        code=ResponseCodes.API000,
+    return APIResponse[MessageResponse].success(
         data=MessageResponse(message="If the email exists, a new code has been sent."),
-        status=JsonResponseStatuses.SUCCESS,
         message="Verification email sent.",
     )
 
@@ -127,10 +117,8 @@ async def login(
 ) -> APIResponse[TokenPair | TwoFactorChallenge]:
     user_agent, ip_address = _client_metadata(request)
     result = await auth_service.login(session, data=data, user_agent=user_agent, ip_address=ip_address)
-    return APIResponse[TokenPair | TwoFactorChallenge](
-        code=ResponseCodes.API000,
+    return APIResponse[TokenPair | TwoFactorChallenge].success(
         data=result,
-        status=JsonResponseStatuses.SUCCESS,
         message="Two-factor required." if isinstance(result, TwoFactorChallenge) else "Logged in.",
     )
 
@@ -152,12 +140,7 @@ async def login_2fa(
         user_agent=user_agent,
         ip_address=ip_address,
     )
-    return APIResponse[TokenPair](
-        code=ResponseCodes.API000,
-        data=pair,
-        status=JsonResponseStatuses.SUCCESS,
-        message="Logged in.",
-    )
+    return APIResponse[TokenPair].success(data=pair, message="Logged in.")
 
 
 # ----------------------------- token lifecycle -----------------------------
@@ -179,12 +162,7 @@ async def refresh(
         user_agent=user_agent,
         ip_address=ip_address,
     )
-    return APIResponse[TokenPair](
-        code=ResponseCodes.API000,
-        data=pair,
-        status=JsonResponseStatuses.SUCCESS,
-        message="Token refreshed.",
-    )
+    return APIResponse[TokenPair].success(data=pair, message="Token refreshed.")
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -205,11 +183,8 @@ async def logout(
 async def me(
     current_user: User = Depends(get_current_user),
 ) -> APIResponse[UserResponse]:
-    return APIResponse[UserResponse](
-        code=ResponseCodes.API000,
-        data=UserResponse.model_validate(current_user),
-        status=JsonResponseStatuses.SUCCESS,
-        message="User retrieved successfully.",
+    return APIResponse[UserResponse].success(
+        data=UserResponse.model_validate(current_user), message="User retrieved successfully."
     )
 
 
@@ -224,12 +199,7 @@ async def setup_2fa(
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
 ) -> APIResponse[Setup2FAResponse]:
     setup = await auth_service.setup_2fa(session, user=current_user)
-    return APIResponse[Setup2FAResponse](
-        code=ResponseCodes.API000,
-        data=setup,
-        status=JsonResponseStatuses.SUCCESS,
-        message="2FA setup initiated.",
-    )
+    return APIResponse[Setup2FAResponse].success(data=setup, message="2FA setup initiated.")
 
 
 @router.post("/2fa/enable", response_model=APIResponse[MessageResponse])
@@ -241,11 +211,8 @@ async def enable_2fa(
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),
 ) -> APIResponse[MessageResponse]:
     await auth_service.enable_2fa(session, user=current_user, totp_code=data.totp_code)
-    return APIResponse[MessageResponse](
-        code=ResponseCodes.API000,
-        data=MessageResponse(message="2FA enabled."),
-        status=JsonResponseStatuses.SUCCESS,
-        message="Two-factor authentication enabled.",
+    return APIResponse[MessageResponse].success(
+        data=MessageResponse(message="2FA enabled."), message="Two-factor authentication enabled."
     )
 
 
@@ -265,11 +232,8 @@ async def disable_2fa(
         password=data.password,
         totp_code=data.totp_code,
     )
-    return APIResponse[MessageResponse](
-        code=ResponseCodes.API000,
-        data=MessageResponse(message="2FA disabled."),
-        status=JsonResponseStatuses.SUCCESS,
-        message="Two-factor authentication disabled.",
+    return APIResponse[MessageResponse].success(
+        data=MessageResponse(message="2FA disabled."), message="Two-factor authentication disabled."
     )
 
 
@@ -302,10 +266,8 @@ async def google_authorize(
         samesite="lax",
         path=_OAUTH_COOKIE_PATH,
     )
-    return APIResponse[GoogleAuthorizeResponse](
-        code=ResponseCodes.API000,
+    return APIResponse[GoogleAuthorizeResponse].success(
         data=GoogleAuthorizeResponse(authorize_url=flow.authorize_url, state=flow.state_token),
-        status=JsonResponseStatuses.SUCCESS,
         message="Google authorization URL generated.",
     )
 
@@ -337,9 +299,7 @@ async def google_callback(
         )
     finally:
         response.delete_cookie(key=OAUTH_STATE_COOKIE_NAME, path=_OAUTH_COOKIE_PATH)
-    return APIResponse[TokenPair | TwoFactorChallenge](
-        code=ResponseCodes.API000,
+    return APIResponse[TokenPair | TwoFactorChallenge].success(
         data=result,
-        status=JsonResponseStatuses.SUCCESS,
         message="Two-factor required." if isinstance(result, TwoFactorChallenge) else "Logged in via Google.",
     )

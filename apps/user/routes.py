@@ -9,9 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.core.database.session import session_factory
 from apps.core.schemas.response import (
     APIResponse,
-    JsonResponseStatuses,
     PaginatedResponse,
-    ResponseCodes,
 )
 from apps.user.containers import UserContainer
 from apps.user.schemas import (
@@ -38,11 +36,8 @@ async def create_user(
 ) -> APIResponse[UserResponse]:
     """Create a new user."""
     user = await user_service.create(session, data=data)
-    return APIResponse[UserResponse](
-        code=ResponseCodes.API000,
-        data=UserResponse.model_validate(user),
-        status=JsonResponseStatuses.SUCCESS,
-        message="User created successfully.",
+    return APIResponse[UserResponse].success(
+        data=UserResponse.model_validate(user), message="User created successfully."
     )
 
 
@@ -55,11 +50,8 @@ async def get_user(
 ) -> APIResponse[UserResponse]:
     """Get a user by ID."""
     user = await user_service.get_by_id(session, user_id=user_id)
-    return APIResponse[UserResponse](
-        code=ResponseCodes.API000,
-        data=UserResponse.model_validate(user),
-        status=JsonResponseStatuses.SUCCESS,
-        message="User retrieved successfully.",
+    return APIResponse[UserResponse].success(
+        data=UserResponse.model_validate(user), message="User retrieved successfully."
     )
 
 
@@ -72,15 +64,13 @@ async def list_users(
 ) -> APIResponse[PaginatedResponse[UserResponse]]:
     """List users with pagination."""
     items, total = await user_service.list_users(session, params=params)
-    return APIResponse[PaginatedResponse[UserResponse]](
-        code=ResponseCodes.API000,
+    return APIResponse[PaginatedResponse[UserResponse]].success(
         data=PaginatedResponse[UserResponse](
             items=[UserResponse.model_validate(u) for u in items],
             total=total,
             limit=params.limit,
             offset=params.offset,
         ),
-        status=JsonResponseStatuses.SUCCESS,
         message="Users retrieved successfully.",
     )
 
@@ -95,11 +85,8 @@ async def update_user(
 ) -> APIResponse[UserResponse]:
     """Update an existing user."""
     user = await user_service.update(session, user_id=user_id, data=data)
-    return APIResponse[UserResponse](
-        code=ResponseCodes.API000,
-        data=UserResponse.model_validate(user),
-        status=JsonResponseStatuses.SUCCESS,
-        message="User updated successfully.",
+    return APIResponse[UserResponse].success(
+        data=UserResponse.model_validate(user), message="User updated successfully."
     )
 
 
@@ -112,9 +99,6 @@ async def delete_user(
 ) -> APIResponse[UserResponse]:
     """Soft-delete a user."""
     user = await user_service.soft_delete(session, user_id=user_id)
-    return APIResponse[UserResponse](
-        code=ResponseCodes.API000,
-        data=UserResponse.model_validate(user),
-        status=JsonResponseStatuses.SUCCESS,
-        message="User deleted successfully.",
+    return APIResponse[UserResponse].success(
+        data=UserResponse.model_validate(user), message="User deleted successfully."
     )
