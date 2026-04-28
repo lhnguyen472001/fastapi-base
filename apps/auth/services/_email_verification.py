@@ -1,23 +1,18 @@
 """Email-verification OTP issuance and validation."""
 
-from __future__ import annotations
-
 import datetime
-from typing import TYPE_CHECKING
 
 from loguru import logger
 
 from apps.auth.exceptions import InvalidOtpError
 from apps.auth.models import EmailVerification, OTPPurpose
+from apps.auth.repository import EmailVerificationRepository
+from apps.auth.security import generate_otp_code, hash_otp_code
+from apps.core.database.types import SessionType
 from apps.core.email import EmailMessage, EmailRenderer, EmailSenderProtocol
-from apps.core.security import generate_otp_code, hash_otp_code
 from apps.settings import app_settings
-
-if TYPE_CHECKING:
-    from apps.auth.repository import EmailVerificationRepository
-    from apps.core.database.types import SessionType
-    from apps.user.models import User
-    from apps.user.services import UserService
+from apps.user.models import User
+from apps.user.services import UserService
 
 
 class EmailVerificationService:
@@ -43,7 +38,12 @@ class EmailVerificationService:
         self.email_renderer = email_renderer
 
     async def verify(self, session: SessionType, *, email: str, code: str) -> User:
-        """Confirm an email-verification OTP and activate the user."""
+        """Confirm an email-verification OTP and activate the user.
+
+        Concurrency: the attempts counter is bumped via a single atomic
+        UPDATE so two simultaneous verify requests cannot both observe
+        ``attempts < max`` and bypass the rate limit.
+        """
         user = await self.user_service.get_by_email_or_username(session, email=email)
         if user is None:
             # Same generic error as wrong code to avoid email enumeration.
@@ -53,14 +53,22 @@ class EmailVerificationService:
         if otp is None:
             raise InvalidOtpError()
 
-        if otp.attempts >= app_settings.auth.otp_max_attempts:
-            otp.used_at = datetime.datetime.now(datetime.UTC)
-            await session.flush()
+        max_attempts = app_settings.auth.otp_max_attempts
+        consumed = await self.email_verification_repository.consume_attempt_atomic(
+            session, otp=otp, max_attempts=max_attempts
+        )
+        if not consumed:
+            # Row was exhausted, used, or expired — treat as a generic
+            # OTP failure so we leak nothing about which case it was.
             raise InvalidOtpError()
 
         if otp.code_hash != hash_otp_code(code):
-            otp.attempts += 1
-            await session.flush()
+            # The attempt was already counted by the atomic UPDATE above.
+            # If this attempt just hit the cap, mark the row used so a
+            # later guess can't squeeze through on a stale find.
+            if otp.attempts >= max_attempts:
+                otp.used_at = datetime.datetime.now(datetime.UTC)
+                await session.flush()
             raise InvalidOtpError()
 
         # Success — mark code used + activate user.

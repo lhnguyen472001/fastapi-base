@@ -12,7 +12,7 @@ from apps.auth.exceptions import (
     TwoFactorNotEnabledError,
 )
 from apps.auth.schemas import Setup2FAResponse
-from apps.core.security import (
+from apps.auth.security import (
     decrypt_totp_secret,
     encrypt_totp_secret,
     verify_password_async,

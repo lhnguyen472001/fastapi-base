@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from apps.core.security import hash_password, verify_password
+from apps.auth.security import hash_password, verify_password
 
 
 def test_hash_password_returns_str() -> None:

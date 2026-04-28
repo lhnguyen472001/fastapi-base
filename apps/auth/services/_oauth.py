@@ -5,7 +5,7 @@ from __future__ import annotations
 import secrets
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from apps.auth.enums import TokenType
 from apps.auth.exceptions import (
@@ -13,20 +13,18 @@ from apps.auth.exceptions import (
     OAuthStateExpiredError,
     OAuthStateInvalidError,
 )
-from apps.core.security import (
+from apps.auth.oauth import GoogleOAuthClient
+from apps.auth.security import (
     TokenError,
     TokenExpiredError as CoreTokenExpiredError,
     compute_pkce_challenge,
-    create_oauth_state_token,
     decode_token,
+    generate_oauth_state_token,
     generate_pkce_verifier,
 )
-
-if TYPE_CHECKING:
-    from apps.auth.oauth import GoogleOAuthClient
-    from apps.core.database.types import SessionType
-    from apps.user.models import User
-    from apps.user.services import UserService
+from apps.core.database.types import SessionType
+from apps.user.models import User
+from apps.user.services import UserService
 
 OAUTH_STATE_COOKIE_NAME = "oauth_state"
 
@@ -73,7 +71,7 @@ class OAuthService:
         state_id = uuid.uuid4().hex
         code_verifier = generate_pkce_verifier()
         code_challenge = compute_pkce_challenge(code_verifier)
-        state_token = create_oauth_state_token(state_id=state_id, code_verifier=code_verifier)
+        state_token = generate_oauth_state_token(state_id=state_id, code_verifier=code_verifier)
         authorize_url = self.google_oauth_client.build_authorize_url(
             state=state_token,
             code_challenge=code_challenge,

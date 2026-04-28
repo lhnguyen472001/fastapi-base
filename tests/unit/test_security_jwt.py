@@ -8,14 +8,14 @@ import jwt
 import pytest
 
 from apps.auth.enums import TokenType
-from apps.core.security import (
+from apps.auth.security import (
     TokenError,
     TokenExpiredError,
-    create_access_token,
-    create_challenge_token,
-    create_refresh_token,
     decode_token,
+    generate_access_token,
+    generate_challenge_token,
     generate_otp_code,
+    generate_refresh_token,
     hash_otp_code,
     hash_token,
 )
@@ -25,7 +25,7 @@ from apps.settings import app_settings
 
 
 def test_access_token_round_trip() -> None:
-    token = create_access_token(subject="user-123")
+    token = generate_access_token(subject="user-123")
     payload = decode_token(token, expected_type=TokenType.ACCESS)
     assert payload["sub"] == "user-123"
     assert payload["type"] == TokenType.ACCESS
@@ -35,13 +35,13 @@ def test_access_token_round_trip() -> None:
 
 
 def test_decode_rejects_wrong_type() -> None:
-    token = create_access_token(subject="user-1")
+    token = generate_access_token(subject="user-1")
     with pytest.raises(TokenError, match="Wrong token type"):
         decode_token(token, expected_type=TokenType.REFRESH)
 
 
 def test_decode_rejects_tampered_signature() -> None:
-    token = create_access_token(subject="user-1")
+    token = generate_access_token(subject="user-1")
     # Replace the entire signature with something obviously wrong but
     # still base64url-shaped so PyJWT actually attempts verification.
     parts = token.split(".")
@@ -59,7 +59,7 @@ def test_decode_rejects_garbage() -> None:
 def test_decode_rejects_expired_token(monkeypatch) -> None:
     # Force the access token TTL to 0 so any decode after issuance is expired.
     monkeypatch.setattr(app_settings.auth, "access_token_expire_minutes", 0)
-    token = create_access_token(subject="user-1")
+    token = generate_access_token(subject="user-1")
     time.sleep(1)  # ensure exp < now
     with pytest.raises(TokenExpiredError):
         decode_token(token, expected_type=TokenType.ACCESS)
@@ -69,7 +69,7 @@ def test_decode_rejects_expired_token(monkeypatch) -> None:
 
 
 def test_refresh_token_returns_token_and_expiry() -> None:
-    token, expires_at = create_refresh_token(subject="user-7")
+    token, expires_at = generate_refresh_token(subject="user-7")
     payload = decode_token(token, expected_type=TokenType.REFRESH)
     assert payload["sub"] == "user-7"
     assert payload["type"] == TokenType.REFRESH
@@ -77,7 +77,7 @@ def test_refresh_token_returns_token_and_expiry() -> None:
 
 
 def test_hash_token_is_deterministic() -> None:
-    token, _ = create_refresh_token(subject="user-7")
+    token, _ = generate_refresh_token(subject="user-7")
     assert hash_token(token) == hash_token(token)
     assert len(hash_token(token)) == 64
 
@@ -86,14 +86,14 @@ def test_hash_token_is_deterministic() -> None:
 
 
 def test_challenge_token_round_trip() -> None:
-    token = create_challenge_token(subject="user-9")
+    token = generate_challenge_token(subject="user-9")
     payload = decode_token(token, expected_type=TokenType.CHALLENGE)
     assert payload["sub"] == "user-9"
     assert payload["type"] == TokenType.CHALLENGE
 
 
 def test_challenge_token_cannot_be_used_as_access() -> None:
-    token = create_challenge_token(subject="user-9")
+    token = generate_challenge_token(subject="user-9")
     with pytest.raises(TokenError):
         decode_token(token, expected_type=TokenType.ACCESS)
 
@@ -129,7 +129,7 @@ def test_hash_otp_code_is_deterministic_and_64_hex() -> None:
 
 
 def test_token_payload_includes_iss_and_aud() -> None:
-    token = create_access_token(subject="user-1")
+    token = generate_access_token(subject="user-1")
     payload = decode_token(token, expected_type=TokenType.ACCESS)
 
     assert payload["iss"] == app_settings.auth.jwt_issuer
@@ -137,7 +137,7 @@ def test_token_payload_includes_iss_and_aud() -> None:
 
 
 def test_decode_rejects_wrong_audience(monkeypatch) -> None:
-    token = create_access_token(subject="user-1")
+    token = generate_access_token(subject="user-1")
     monkeypatch.setattr(app_settings.auth, "jwt_audience", "some-other-audience")
 
     with pytest.raises(TokenError):
@@ -145,7 +145,7 @@ def test_decode_rejects_wrong_audience(monkeypatch) -> None:
 
 
 def test_decode_rejects_wrong_issuer(monkeypatch) -> None:
-    token = create_access_token(subject="user-1")
+    token = generate_access_token(subject="user-1")
     monkeypatch.setattr(app_settings.auth, "jwt_issuer", "some-other-issuer")
 
     with pytest.raises(TokenError):
@@ -183,7 +183,7 @@ def test_encode_hardcodes_rs256_algorithm_regardless_of_settings(monkeypatch) ->
     """
     monkeypatch.setattr(app_settings.auth, "jwt_algorithm", "HS256")
 
-    token = create_access_token(subject="user-1")
+    token = generate_access_token(subject="user-1")
     header = jwt.get_unverified_header(token)
 
     assert header["alg"] == "RS256"

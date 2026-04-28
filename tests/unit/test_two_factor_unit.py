@@ -15,12 +15,12 @@ from unittest.mock import AsyncMock
 import pyotp
 import pytest
 
-from apps.auth.services._two_factor import TwoFactorService
-from apps.core.security import (
+from apps.auth.security import (
     decrypt_totp_secret,
     encrypt_totp_secret,
     verify_totp_with_replay_guard,
 )
+from apps.auth.services._two_factor import TwoFactorService
 
 # ----------------------------- Fernet helpers -------------------------------
 

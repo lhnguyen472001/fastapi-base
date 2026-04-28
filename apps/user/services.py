@@ -5,9 +5,9 @@ import secrets
 import uuid
 from collections.abc import Sequence
 
+from apps.auth.security import hash_password_async
 from apps.core.database.filters import LimitOffsetPaginationFilter
 from apps.core.database.types import SessionType
-from apps.core.security import hash_password_async
 from apps.core.services.base import SQLAlchemyService
 from apps.user.exceptions import UserAlreadyExistsError, UserNotFoundError
 from apps.user.models import User

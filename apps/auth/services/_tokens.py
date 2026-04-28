@@ -15,12 +15,12 @@ from apps.auth.exceptions import (
 )
 from apps.auth.models import RefreshToken
 from apps.auth.schemas import TokenPair
-from apps.core.security import (
+from apps.auth.security import (
     TokenError,
     TokenExpiredError as CoreTokenExpiredError,
-    create_access_token,
-    create_refresh_token,
     decode_token,
+    generate_access_token,
+    generate_refresh_token,
     hash_token,
 )
 from apps.settings import app_settings
@@ -64,8 +64,8 @@ class TokenService:
             A tuple of (TokenPair, RefreshToken) so callers that need the
             persisted row (e.g. token rotation) avoid a redundant query.
         """
-        access_token = create_access_token(subject=str(user.id))
-        refresh_raw, refresh_expires_at = create_refresh_token(subject=str(user.id))
+        access_token = generate_access_token(subject=str(user.id))
+        refresh_raw, refresh_expires_at = generate_refresh_token(subject=str(user.id))
 
         refresh_row = RefreshToken(
             user_id=user.id,

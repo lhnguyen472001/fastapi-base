@@ -42,7 +42,7 @@ def upgrade() -> None:
         sa.Column("last_totp_counter", sa.BigInteger(), nullable=True),
     )
 
-    from apps.core.security import encrypt_totp_secret
+    from apps.auth.security import encrypt_totp_secret
 
     bind = op.get_bind()
     rows = bind.execute(

@@ -12,7 +12,7 @@ import uuid
 
 import pytest
 
-from apps.core.security import verify_password
+from apps.auth.security import verify_password
 from apps.user.exceptions import UserAlreadyExistsError, UserNotFoundError
 from apps.user.repositories import UserRepository
 from apps.user.schemas import CreateUserRequest, ListUsersRequest, UpdateUserRequest

@@ -17,8 +17,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from apps.auth.exceptions import RefreshTokenRevokedError
+from apps.auth.security import generate_refresh_token
 from apps.auth.services._tokens import TokenService
-from apps.core.security import create_refresh_token
 
 
 def _make_service() -> tuple[TokenService, AsyncMock]:
@@ -33,7 +33,7 @@ async def test_refresh_revokes_family_when_token_was_previously_rotated() -> Non
     """An attacker presenting a previously-rotated token revokes the family."""
     service, repo = _make_service()
     session = AsyncMock()
-    raw_token, _ = create_refresh_token(subject=str(uuid.uuid4()))
+    raw_token, _ = generate_refresh_token(subject=str(uuid.uuid4()))
     repo.find_active_by_hash.return_value = None  # not active
 
     user_id = uuid.uuid4()
@@ -53,7 +53,7 @@ async def test_refresh_does_not_revoke_when_token_unknown() -> None:
     """A forged token (signature valid but never issued) must NOT cascade-revoke."""
     service, repo = _make_service()
     session = AsyncMock()
-    raw_token, _ = create_refresh_token(subject=str(uuid.uuid4()))
+    raw_token, _ = generate_refresh_token(subject=str(uuid.uuid4()))
     repo.find_active_by_hash.return_value = None
     repo.find_by_hash.return_value = None  # token never existed
 

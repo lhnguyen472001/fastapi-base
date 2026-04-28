@@ -19,18 +19,18 @@ from apps.auth.schemas import (
     TokenPair,
     TwoFactorChallenge,
 )
+from apps.auth.security import (
+    TokenError,
+    TokenExpiredError as CoreTokenExpiredError,
+    decode_token,
+    generate_challenge_token,
+    verify_password_async,
+)
 from apps.auth.services._email_verification import EmailVerificationService
 from apps.auth.services._oauth import OAuthFlowStart, OAuthService
 from apps.auth.services._tokens import TokenService
 from apps.auth.services._two_factor import TwoFactorService
 from apps.core.database.types import SessionType
-from apps.core.security import (
-    TokenError,
-    TokenExpiredError as CoreTokenExpiredError,
-    create_challenge_token,
-    decode_token,
-    verify_password_async,
-)
 from apps.user.models import User
 from apps.user.services import UserService
 
@@ -91,7 +91,7 @@ class AuthService:
         user = await self._authenticate(session, email=data.email, password=data.password)
 
         if user.is_2fa_enabled:
-            challenge_token = create_challenge_token(subject=str(user.id))
+            challenge_token = generate_challenge_token(subject=str(user.id))
             return TwoFactorChallenge(challenge_token=challenge_token)
 
         pair, _ = await self.token_service.issue_pair(session, user=user, user_agent=user_agent, ip_address=ip_address)
@@ -201,7 +201,7 @@ class AuthService:
         )
 
         if user.is_2fa_enabled:
-            challenge_token = create_challenge_token(subject=str(user.id))
+            challenge_token = generate_challenge_token(subject=str(user.id))
             return TwoFactorChallenge(challenge_token=challenge_token)
 
         pair, _ = await self.token_service.issue_pair(session, user=user, user_agent=user_agent, ip_address=ip_address)

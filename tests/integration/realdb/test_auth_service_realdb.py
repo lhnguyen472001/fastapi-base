@@ -42,8 +42,8 @@ from apps.auth.services import (
 )
 from apps.core.email import EmailRenderer, StubEmailSender
 from apps.auth.enums import TokenType
-from apps.core.security import (
-    create_refresh_token,
+from apps.auth.security import (
+    generate_refresh_token,
     decode_token,
 )
 from apps.settings import app_settings
@@ -369,7 +369,7 @@ async def test_refresh_with_access_token_type_rejected(real_session, auth_servic
 
 async def test_refresh_with_unknown_jwt_rejected(real_session, auth_service) -> None:
     """A signed-but-unknown refresh JWT must be rejected (no DB row exists)."""
-    forged, _ = create_refresh_token(subject=str(uuid.uuid4()))
+    forged, _ = generate_refresh_token(subject=str(uuid.uuid4()))
     payload = decode_token(forged, expected_type=TokenType.REFRESH)
     assert payload["type"] == TokenType.REFRESH  # token itself is valid
 
@@ -392,7 +392,7 @@ async def test_logout_revokes_refresh_token(real_session, auth_service, email_se
 
 async def test_logout_idempotent(real_session, auth_service) -> None:
     """Logging out an unknown token must not raise."""
-    forged, _ = create_refresh_token(subject=str(uuid.uuid4()))
+    forged, _ = generate_refresh_token(subject=str(uuid.uuid4()))
     await auth_service.logout(real_session, raw_refresh_token=forged)
 
 
