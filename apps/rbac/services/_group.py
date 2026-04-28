@@ -1,8 +1,11 @@
 """Group creation + user/role membership management."""
 
+import uuid
+
+import casbin
 from loguru import logger
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.core.database.transactional import transactional
 from apps.rbac.exceptions import (
@@ -12,12 +15,6 @@ from apps.rbac.exceptions import (
 )
 from apps.rbac.models import Group, GroupRole, UserGroup
 from apps.rbac.services._helpers import role_sub, user_sub
-
-import uuid
-
-import casbin
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from apps.rbac.services._repositories import RBACRepositories
 
 
@@ -105,7 +102,6 @@ class GroupService:
         rules = [[user_sub(user_id), role_sub(gr.role_id)] for gr in group_roles]
         if rules:
             await self.enforcer.add_grouping_policies(rules)
-            await self.enforcer.save_policy()
         logger.info("GroupService - add_user_to_group - user={} group={}", user_id, group_id)
         return membership
 
@@ -138,13 +134,10 @@ class GroupService:
             raise RBACConflictError(message="Role already assigned to this group.") from exc
 
         # Propagate to every current active member of the group.
-        result = await session.execute(
-            select(UserGroup.user_id).where(UserGroup.group_id == group_id, UserGroup.is_active.is_(True))
-        )
-        rules = [[user_sub(member_id), role_sub(role_id)] for member_id in result.scalars().all()]
+        member_ids = await self.user_group_repository.list_active_user_ids(session, group_id=group_id)
+        rules = [[user_sub(member_id), role_sub(role_id)] for member_id in member_ids]
         if rules:
             await self.enforcer.add_grouping_policies(rules)
-            await self.enforcer.save_policy()
         logger.info(
             "GroupService - assign_role_to_group - group={} role={}",
             group_id,

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import uuid
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.core.database.repository import BaseSQLAlchemyRepository
 from apps.rbac.models import (
@@ -17,11 +18,6 @@ from apps.rbac.models import (
     UserGroup,
     UserRole,
 )
-
-if TYPE_CHECKING:
-    import uuid
-
-    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class RoleRepository(BaseSQLAlchemyRepository[Role]):
@@ -68,6 +64,21 @@ class UserGroupRepository(BaseSQLAlchemyRepository[UserGroup]):
     async def list_for_user(self, session: AsyncSession, *, user_id: uuid.UUID) -> list[UserGroup]:
         result = await session.execute(
             select(UserGroup).where(UserGroup.user_id == user_id, UserGroup.is_active.is_(True))
+        )
+        return list(result.scalars().all())
+
+    async def list_active_user_ids(self, session: AsyncSession, *, group_id: int) -> list[uuid.UUID]:
+        """Return ``user_id`` values for every active member of a group.
+
+        Projects the column directly so callers (e.g.
+        :meth:`GroupService.assign_role_to_group`) avoid hydrating full
+        ``UserGroup`` rows when only the user IDs are needed.
+        """
+        result = await session.execute(
+            select(UserGroup.user_id).where(
+                UserGroup.group_id == group_id,
+                UserGroup.is_active.is_(True),
+            )
         )
         return list(result.scalars().all())
 
