@@ -28,6 +28,7 @@ from apps.core.exceptions.handlers import (
 )
 from apps.core.middlewares.sqlalchemy import SQLAlchemySessionMiddleware
 from apps.core.rate_limit import limiter, rate_limit_exceeded_handler
+from apps.core.redis import close_redis_client
 from apps.health.routes import router as health_router
 from apps.product.containers import product_container  # noqa: F401
 from apps.product.routes import category_router as product_category_router, router as product_router
@@ -86,6 +87,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     finally:
         logger.info("factory - lifespan - Shutting down")
         await rbac_container.shutdown_resources()  # type: ignore[func-returns-value]
+        await close_redis_client()
 
 
 def create_app() -> FastAPI:
