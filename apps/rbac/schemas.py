@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import uuid
 
 from pydantic import Field
 
 from apps.core.schemas.base import BaseObjectSchema
-
-if TYPE_CHECKING:
-    import uuid
 
 # ---- Roles -----------------------------------------------------------------
 
