@@ -183,7 +183,7 @@ class UserService(SQLAlchemyService[User]):
             UserAlreadyExistsError: If the new email or username collides with
                 another active user.
         """
-        await self.get_by_id(session, user_id=user_id)
+        await self.find_or_raise(session, user_id=user_id)
 
         if data.email is not None or data.username is not None:
             conflict = await self.repository.find_by_email_or_username(
@@ -220,7 +220,7 @@ class UserService(SQLAlchemyService[User]):
         Raises:
             UserNotFoundError: If the user does not exist or is already soft-deleted.
         """
-        user = await self.get_by_id(session, user_id=user_id)
+        user = await self.find_or_raise(session, user_id=user_id)
         user.deleted_at = datetime.datetime.now(datetime.UTC)
         return user
 

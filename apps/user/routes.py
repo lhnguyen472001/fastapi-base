@@ -37,7 +37,8 @@ async def create_user(
     """Create a new user."""
     user = await user_service.create(session, data=data)
     return APIResponse[UserResponse].success(
-        data=UserResponse.model_validate(user), message="User created successfully."
+        data=UserResponse.model_validate(user),
+        message="User created successfully.",
     )
 
 
@@ -51,7 +52,8 @@ async def get_user(
     """Get a user by ID."""
     user = await user_service.find_or_raise(session, user_id=user_id)
     return APIResponse[UserResponse].success(
-        data=UserResponse.model_validate(user), message="User retrieved successfully."
+        data=UserResponse.model_validate(user),
+        message="User retrieved successfully.",
     )
 
 
@@ -86,7 +88,8 @@ async def update_user(
     """Update an existing user."""
     user = await user_service.update(session, user_id=user_id, data=data)
     return APIResponse[UserResponse].success(
-        data=UserResponse.model_validate(user), message="User updated successfully."
+        data=UserResponse.model_validate(user),
+        message="User updated successfully.",
     )
 
 
@@ -100,5 +103,6 @@ async def delete_user(
     """Soft-delete a user."""
     user = await user_service.soft_delete(session, user_id=user_id)
     return APIResponse[UserResponse].success(
-        data=UserResponse.model_validate(user), message="User deleted successfully."
+        data=UserResponse.model_validate(user),
+        message="User deleted successfully.",
     )
