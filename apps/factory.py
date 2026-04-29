@@ -27,7 +27,6 @@ from apps.core.exceptions.handlers import (
     unhandled_exception_handler,
     validation_exception_handler,
 )
-from apps.core.middlewares.sqlalchemy import SQLAlchemySessionMiddleware
 from apps.core.rate_limit import limiter, rate_limit_exceeded_handler
 from apps.core.redis import close_redis_client
 from apps.health.routes import health_router
@@ -111,7 +110,12 @@ def application_factory() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.add_middleware(SQLAlchemySessionMiddleware)
+    # NOTE: session lifecycle lives in apps.core.database.session.session_factory
+    # (per-request dependency). Previously a SQLAlchemySessionMiddleware ran
+    # scoped_session.remove() in its finally block — that fired BEFORE FastAPI
+    # tore down the session_factory generator, closing the session before its
+    # commit could run. Folding the lifecycle into the dependency removes the
+    # race.
 
     # Exception handlers ----------------------------------------------------
     app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)  # type: ignore[arg-type]

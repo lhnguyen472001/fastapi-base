@@ -1,8 +1,11 @@
+import asyncio
 from collections.abc import AsyncGenerator
 from contextvars import ContextVar, Token
 from typing import Any
 
+from loguru import logger
 from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_scoped_session,
@@ -85,27 +88,23 @@ def get_current_session() -> async_scoped_session[AsyncSession]:
 
 
 async def session_factory() -> AsyncGenerator[async_scoped_session[AsyncSession]]:
-    """Yield a request-scoped session and manage its transaction lifecycle.
-
-    Commit semantics live at the session boundary, not in routes or services:
-
-    * On clean exit, commit any pending transaction so route handlers and
-      services never need to call ``session.commit()`` themselves.
-    * On any exception, roll back. The exception still propagates so the
-      global handler can translate it into an HTTP response.
-    * The session is closed in ``finally`` so the connection is returned to
-      the pool either way.
-    """
+    """Yield a request-scoped session and manage its full lifecycle."""
+    set_session_ctx(session_id=id(asyncio.current_task()))
     session = scoped_session()
-
     try:
-        yield session
-    except Exception:
-        if session.in_transaction():
-            await session.rollback()
-        raise
-    else:
-        if session.in_transaction():
-            await session.commit()
+        try:
+            yield session
+        except Exception:
+            if session.in_transaction():
+                await session.rollback()
+            raise
+        else:
+            if session.in_transaction():
+                await session.commit()
     finally:
-        await session.close()
+        try:
+            await scoped_session.remove()
+        except SQLAlchemyError:
+            logger.exception("session_factory - scoped_session.remove() failed")
+        finally:
+            reset_session_ctx()
