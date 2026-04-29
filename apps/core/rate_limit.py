@@ -9,9 +9,7 @@ multi-worker windows.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from fastapi import status
+from fastapi import Request, status
 from fastapi.responses import ORJSONResponse
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
@@ -20,20 +18,16 @@ from slowapi.util import get_remote_address
 from apps.core.schemas.response import APIResponse, JsonResponseStatuses, ResponseCodes
 from apps.settings import app_settings
 
-if TYPE_CHECKING:
-    from fastapi import Request
-
 limiter = Limiter(
     key_func=get_remote_address,
     storage_uri=app_settings.rate_limit.storage_uri,
     enabled=app_settings.rate_limit.enabled,
-    default_limits=[],
-    headers_enabled=True,
+    headers_enabled=False,
     strategy="fixed-window",
 )
 
 
-async def rate_limit_exceeded_handler(request: Request, exc: Exception) -> ORJSONResponse:  # noqa: ARG001 — FastAPI handler signature
+async def rate_limit_exceeded_handler(_: Request, exc: Exception) -> ORJSONResponse:
     """Convert ``RateLimitExceeded`` into the project's standard envelope.
 
     Preserves the ``Retry-After`` header that ``slowapi`` would normally set
