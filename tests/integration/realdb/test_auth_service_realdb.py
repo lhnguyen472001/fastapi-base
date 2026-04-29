@@ -7,6 +7,7 @@ through the full service layer. Google OAuth HTTP calls are mocked with respx.
 from __future__ import annotations
 
 import re
+import time
 import uuid
 
 import httpx
@@ -14,6 +15,7 @@ import pyotp
 import pytest
 import respx
 
+from apps.auth.constants import GOOGLE_TOKEN_ENDPOINT, GOOGLE_USERINFO_ENDPOINT
 from apps.auth.enums import TokenType
 from apps.auth.exceptions import (
     EmailNotVerifiedError,
@@ -25,7 +27,6 @@ from apps.auth.exceptions import (
     RefreshTokenRevokedError,
     TwoFactorNotEnabledError,
 )
-from apps.auth.constants import GOOGLE_TOKEN_ENDPOINT, GOOGLE_USERINFO_ENDPOINT
 from apps.auth.oauth import GoogleOAuthClient
 from apps.auth.repository import EmailVerificationRepository, RefreshTokenRepository
 from apps.auth.schemas import (
@@ -49,6 +50,12 @@ from apps.core.email import EmailRenderer, StubEmailSender
 from apps.settings import app_settings
 from apps.user.repositories import UserRepository
 from apps.user.services import UserService
+
+
+def _next_totp_code(secret: str) -> str:
+    """Mint a TOTP code one window past now to clear the replay-guard counter."""
+    return pyotp.TOTP(secret).at(int(time.time()) + 30)
+
 
 # ----------------------------- fixtures -------------------------------------
 
@@ -291,7 +298,7 @@ async def test_login_with_2fa_returns_challenge_then_token_pair(real_session, au
     await real_session.flush()
     assert isinstance(step1, TwoFactorChallenge)
 
-    valid_code = pyotp.TOTP(setup.secret).now()
+    valid_code = _next_totp_code(setup.secret)
     step2 = await auth_service.login_2fa(real_session, challenge_token=step1.challenge_token, totp_code=valid_code)
     await real_session.flush()
     assert isinstance(step2, TokenPair)
@@ -317,7 +324,7 @@ async def test_disable_2fa_clears_secret(real_session, auth_service, email_sende
     await auth_service.enable_2fa(real_session, user=user, totp_code=pyotp.TOTP(setup.secret).now())
     await real_session.flush()
 
-    valid_code = pyotp.TOTP(setup.secret).now()
+    valid_code = _next_totp_code(setup.secret)
     await auth_service.disable_2fa(real_session, user=user, password=payload.password, totp_code=valid_code)
     await real_session.flush()
 
