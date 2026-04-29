@@ -22,8 +22,8 @@ services:
     container_name: fastapi-base-mailhog
     restart: unless-stopped
     ports:
-      - "1025:1025"  # SMTP listener (no auth, no TLS)
-      - "8025:8025"  # Web UI + JSON HTTP API
+      - "1025:1025" # SMTP listener (no auth, no TLS)
+      - "8025:8025" # Web UI + JSON HTTP API
 
   redis:
     image: redis:7-alpine
@@ -102,14 +102,11 @@ services:
     volumes:
       - localstack_data:/var/lib/localstack
       - /Users/lhnguyen4748/.colima/default/docker.sock:/var/run/docker.sock
-    networks:
-      - app-network
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:4566/_localstack/health" ]
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
       interval: 10s
       timeout: 5s
       retries: 5
-
 
 volumes:
   postgres_data:
