@@ -78,8 +78,8 @@ async def list_with_count_window_function(
     **filter_kwargs: dict[str, Any] | Iterable[tuple[Any, Any]],
 ) -> tuple[Sequence[SQLAlchemyModelT], int]:
     """Single-query list+count using ``COUNT(*) OVER ()`` (Postgres default)."""
-    from sqlalchemy.sql import func as sql_func
-    from sqlalchemy.sql.expression import over
+    from sqlalchemy.sql import func as sql_func  # noqa: PLC0415
+    from sqlalchemy.sql.expression import over  # noqa: PLC0415
 
     statement = repo._build_query_statement(
         *filters,
