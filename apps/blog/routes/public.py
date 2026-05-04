@@ -7,10 +7,9 @@ URL prefix can never collide with workspace slugs (``public`` is on the
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.blog.containers import BlogContainer
 from apps.blog.enums import PostStatus
@@ -24,15 +23,11 @@ from apps.blog.schemas import (
     PostResponse,
     TagResponse,
 )
+from apps.blog.services import CategoryService, PostService, TagService
 from apps.core.database.session import session_factory
 from apps.core.schemas.response import APIResponse, PaginatedResponse
 from apps.workspace.dependencies import get_workspace_by_slug
-
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
-
-    from apps.blog.services import CategoryService, PostService, TagService
-    from apps.workspace.models import Workspace
+from apps.workspace.models import Workspace
 
 blog_public_router = APIRouter(prefix="/public/workspaces/{workspace_slug}/blog", tags=["blog-public"])
 

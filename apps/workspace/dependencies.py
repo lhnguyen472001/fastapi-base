@@ -21,13 +21,14 @@ from __future__ import annotations
 import uuid
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
-from typing import TYPE_CHECKING
 
 from dependency_injector.wiring import Provide, inject
 from fastapi import Depends, Path
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.auth.dependencies import get_current_user
 from apps.core.database.session import session_factory
+from apps.user.models import User
 from apps.workspace.containers import WorkspaceContainer
 from apps.workspace.enums import WorkspaceRole
 from apps.workspace.exceptions import (
@@ -35,13 +36,8 @@ from apps.workspace.exceptions import (
     WorkspaceNotMemberError,
     WorkspaceRoleForbiddenError,
 )
-
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
-
-    from apps.user.models import User
-    from apps.workspace.models import Workspace
-    from apps.workspace.services import WorkspaceMemberService, WorkspaceService
+from apps.workspace.models import Workspace
+from apps.workspace.services import WorkspaceMemberService, WorkspaceService
 
 # Active-workspace ContextVar — populated by every workspace dependency
 # below so blog repositories / services can read the scope without

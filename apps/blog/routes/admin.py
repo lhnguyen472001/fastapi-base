@@ -9,13 +9,14 @@ per-route below.
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING
 
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.auth.dependencies import get_current_user
 from apps.blog.containers import BlogContainer
+from apps.blog.models import Post
 from apps.blog.schemas import (
     CategoryResponse,
     CreateCategoryRequest,
@@ -31,18 +32,13 @@ from apps.blog.schemas import (
     UpdatePostRequest,
     UpdateTagRequest,
 )
+from apps.blog.services import CategoryService, PostService, TagService
 from apps.core.database.session import session_factory
 from apps.core.schemas.response import APIResponse, PaginatedResponse
+from apps.user.models import User
 from apps.workspace.dependencies import require_workspace_member, require_workspace_role
 from apps.workspace.enums import WorkspaceRole
-
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
-
-    from apps.blog.models import Post
-    from apps.blog.services import CategoryService, PostService, TagService
-    from apps.user.models import User
-    from apps.workspace.models import Workspace
+from apps.workspace.models import Workspace
 
 blog_admin_router = APIRouter(prefix="/workspaces/{workspace_slug}/blog", tags=["blog"])
 

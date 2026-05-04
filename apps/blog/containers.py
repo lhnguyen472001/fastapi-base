@@ -35,8 +35,8 @@ class BlogContainer(containers.DeclarativeContainer):
     post_service = providers.Factory(
         PostService,
         repository=post_repository,
+        tag_repository=tag_repository,
         content_repository=post_content_repository,
         post_tag_repository=post_tag_repository,
         category_repository=category_repository,
-        tag_repository=tag_repository,
     )
