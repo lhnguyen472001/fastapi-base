@@ -4,6 +4,7 @@ from fastapi.responses import ORJSONResponse
 from loguru import logger
 
 from apps.core.schemas.response import JsonResponseStatuses, ResponseCodes
+from apps.settings import app_settings
 
 from .base import BackendError
 
@@ -20,7 +21,13 @@ def unhandled_exception_handler(_: Request, exc: Exception) -> ORJSONResponse:
     Returns:
         ORJSONResponse with a generic 500 error body.
     """
-    logger.exception("Unhandled exception: {}", exc)
+    if app_settings.environment.lower() == "production":
+        # Production logs ship to third-party indices; a full traceback
+        # leaks source paths and variable names. ``repr`` keeps the type
+        # and message but drops the stack.
+        logger.error("Unhandled exception: {!r}", exc)
+    else:
+        logger.exception("Unhandled exception: {}", exc)
     return ORJSONResponse(
         status_code=500,
         content={

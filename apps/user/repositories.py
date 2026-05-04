@@ -1,7 +1,8 @@
 import uuid
+from collections.abc import Sequence
 from typing import Protocol
 
-from sqlalchemy import or_
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.core.database.repository import BaseSQLAlchemyRepository
@@ -27,6 +28,13 @@ class UserRepositoryProtocol(Protocol):
         username: str | None = None,
         exclude_id: uuid.UUID | None = None,
     ) -> User | None: ...
+
+    async def find_existing_usernames(
+        self,
+        session: AsyncSession,
+        *,
+        usernames: Sequence[str],
+    ) -> set[str]: ...
 
 
 class UserRepository(BaseSQLAlchemyRepository[User]):
@@ -73,3 +81,24 @@ class UserRepository(BaseSQLAlchemyRepository[User]):
 
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def find_existing_usernames(
+        self,
+        session: AsyncSession,
+        *,
+        usernames: Sequence[str],
+    ) -> set[str]:
+        """Return the subset of ``usernames`` already taken by an active user.
+
+        Single ``WHERE username IN (...)`` query; replaces the per-candidate
+        round-trip in :meth:`UserService._unique_username` so OAuth signup
+        collision handling completes in one DB hit instead of up to 5.
+        """
+        if not usernames:
+            return set()
+        stmt = select(User.username).where(
+            User.username.in_(list(usernames)),
+            User.deleted_at.is_(None),
+        )
+        result = await session.execute(stmt)
+        return set(result.scalars().all())

@@ -26,6 +26,14 @@ GOOGLE_OAUTH_HTTP_TIMEOUT_SECONDS: Final[float] = 10.0
 
 # slowapi rate-limit budgets per remote address. Strings follow the
 # ``"<count>/<period>"`` syntax that ``Limiter.limit`` accepts.
+#
+# Behind a load balancer or reverse proxy the "remote address" is the
+# proxy's IP, not the originating client — so the budgets below would
+# rate-limit the LB instead of each user. If/when this service runs
+# behind a trusted proxy, configure slowapi's ``Limiter`` with
+# ``key_func`` reading ``X-Forwarded-For`` (or use
+# ``starlette.middleware.proxy.ProxyHeadersMiddleware`` upstream). See
+# https://slowapi.readthedocs.io/en/latest/#deployment-considerations
 RATE_LIMIT_REGISTER: Final[str] = "5/minute"
 RATE_LIMIT_VERIFY_EMAIL: Final[str] = "10/minute"
 RATE_LIMIT_RESEND_VERIFICATION: Final[str] = "5/minute"

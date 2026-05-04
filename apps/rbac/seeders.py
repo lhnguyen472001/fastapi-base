@@ -97,16 +97,26 @@ async def sync_registered_resources(
 
 
 async def _ensure_admin_role(session: AsyncSession, *, name: str) -> tuple[Role, bool]:
-    """Return (role, created) — fetches existing or inserts a new admin role."""
-    existing = await session.execute(select(Role).where(Role.name == name))
-    found = existing.scalar_one_or_none()
-    if found is not None:
-        return found, False
+    """Idempotently insert the admin role.
 
-    role = Role(name=name, display_name=name.replace("_", " ").title(), description="Auto-seeded by registry sync.")
-    session.add(role)
-    await session.flush()
-    return role, True
+    Uses ``INSERT ... ON CONFLICT DO NOTHING`` on the unique ``roles.name``
+    constraint so two workers booting concurrently cannot raise
+    ``IntegrityError``; the second one no-ops and re-reads the existing row.
+    """
+    stmt = (
+        pg_insert(Role)
+        .values(
+            name=name,
+            display_name=name.replace("_", " ").title(),
+            description="Auto-seeded by registry sync.",
+        )
+        .on_conflict_do_nothing(index_elements=["name"])
+    )
+    result = await session.execute(stmt)
+    created = (result.rowcount or 0) > 0
+
+    found = await session.execute(select(Role).where(Role.name == name))
+    return found.scalar_one(), created
 
 
 async def _ensure_permission(

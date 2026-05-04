@@ -69,9 +69,12 @@ class GoogleOAuthClient:
             "redirect_uri": self.redirect_uri,
             "response_type": "code",
             "scope": GOOGLE_OAUTH_SCOPES,
-            "access_type": "offline",
+            # No ``access_type=offline`` / ``prompt=consent`` — we authenticate
+            # the user once per login and have no background flow that needs
+            # a refresh token. Re-add both (and persist the refresh token
+            # encrypted at rest) before introducing any "act as the user
+            # later" feature.
             "include_granted_scopes": "true",
-            "prompt": "consent",
             "state": state,
             "code_challenge": code_challenge,
             "code_challenge_method": "S256",

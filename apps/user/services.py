@@ -124,13 +124,18 @@ class UserService(SQLAlchemyService[User]):
         return await self.repository.add(session, payload, expunge=False)
 
     async def _unique_username(self, session: SessionType, hint: str) -> str:
-        """Disambiguate a username by appending random suffixes on collision."""
-        candidate = hint
-        for _ in range(5):
-            collision = await self.repository.find_by_email_or_username(session, username=candidate)
-            if collision is None:
+        """Disambiguate a username by appending random suffixes on collision.
+
+        Generates the hint plus four random-suffixed candidates upfront and
+        checks all of them in a single ``WHERE username IN (...)`` query, so
+        OAuth signup with a colliding email-local-part costs one round-trip
+        instead of up to five.
+        """
+        candidates = [hint, *(f"{hint}_{secrets.token_hex(3)}" for _ in range(4))]
+        taken = await self.repository.find_existing_usernames(session, usernames=candidates)
+        for candidate in candidates:
+            if candidate not in taken:
                 return candidate
-            candidate = f"{hint}_{secrets.token_hex(3)}"
         # 5 collisions in a row is astronomically unlikely; fall back to a
         # fully random username.
         return f"user_{secrets.token_hex(8)}"

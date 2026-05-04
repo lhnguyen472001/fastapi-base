@@ -73,6 +73,19 @@ class BaseSQLAlchemyRepository(
     id_attribute: str | InstrumentedAttribute[Any] = "id"
     statement: Select[tuple[SQLAlchemyModelT]]
 
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        if cls.__dict__.get("__abstract_repository__"):
+            return
+        own_model_type = cls.__dict__.get("model_type")
+        if own_model_type is None or not isinstance(own_model_type, type):
+            msg = (
+                f"{cls.__name__} must declare class attribute "
+                "`model_type = <ORM model class>` "
+                "(or set `__abstract_repository__ = True` for intermediate bases)."
+            )
+            raise TypeError(msg)
+
     def __init__(self, *, statement: Select[tuple[SQLAlchemyModelT]] | None = None, **kwargs: Any) -> None:
         """Initialize the repository.
 

@@ -146,11 +146,16 @@ class EmailVerificationService:
             # session and the user can call /auth/verify-email/resend later.
             # SmtpEmailSender wraps aiosmtplib.SMTPException as RuntimeError;
             # OSError covers DNS / TCP failures that escape the SMTP layer.
+            # Log only the first 8 hex chars of the UUID for correlation;
+            # avoids full pseudo-identifier disclosure if logs are forwarded.
             logger.error(
-                "EmailVerificationService - issue_and_send - delivery failed for user_id={uid}: {err}",
-                uid=user.id,
+                "EmailVerificationService - issue_and_send - delivery failed for user={short}: {err}",
+                short=user.id.hex[:8],
                 err=exc,
             )
             return
 
-        logger.info("EmailVerificationService - issue_and_send - user_id={uid}", uid=user.id)
+        logger.info(
+            "EmailVerificationService - issue_and_send - user={short}",
+            short=user.id.hex[:8],
+        )

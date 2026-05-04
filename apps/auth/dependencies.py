@@ -28,7 +28,7 @@ async def get_current_user(
         InvalidTokenError: If the Authorization header is missing or the token
             is invalid / expired / refers to a deleted user.
     """
-    if credentials is None or credentials.scheme.lower() != "bearer":
+    if credentials is None or credentials.scheme != "Bearer":
         raise InvalidTokenError(message="Missing or malformed Authorization header.")
 
     return await auth_service.get_user_from_access_token(session, token=credentials.credentials)

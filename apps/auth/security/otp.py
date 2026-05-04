@@ -17,13 +17,23 @@ from __future__ import annotations
 import base64
 import functools
 import hashlib
+import hmac
 import secrets
 import time
 
 import pyotp
 from cryptography.fernet import Fernet
+from loguru import logger
 
 from apps.settings import app_settings
+
+# Deterministic dev-mode Fernet key. NEVER trips in production because
+# ``apps.settings._enforce_production_safety`` raises at startup when
+# ``totp_encryption_key`` is empty AND ``ENVIRONMENT=production``.
+# A constant key (vs ``secrets.token_bytes`` per process) means TOTP
+# secrets encrypted in dev survive process restarts and tests stay
+# deterministic. Loud warning is emitted once per process via lru_cache.
+_DEV_FALLBACK_FERNET_KEY: bytes = base64.urlsafe_b64encode(b"\x00" * 32)
 
 
 def generate_otp_code(length: int | None = None) -> str:
@@ -45,8 +55,13 @@ def _load_totp_fernet() -> Fernet:
     if raw:
         return Fernet(raw.encode("ascii"))
 
-    derived = base64.urlsafe_b64encode(hashlib.sha256(secrets.token_bytes(32)).digest())
-    return Fernet(derived.decode("ascii"))
+    logger.warning(
+        "_load_totp_fernet - AUTH_TOTP_ENCRYPTION_KEY is empty; falling back "
+        "to deterministic dev key. NEVER use this in production — generate one "
+        "with `uv run python scripts/generate_totp_key.py` and set "
+        "AUTH_TOTP_ENCRYPTION_KEY in the environment."
+    )
+    return Fernet(_DEV_FALLBACK_FERNET_KEY)
 
 
 def encrypt_totp_secret(plaintext: str) -> str:
@@ -93,7 +108,7 @@ def verify_totp_with_replay_guard(
     for offset in range(-valid_window, valid_window + 1):
         candidate_counter = current_counter + offset
         candidate_time = candidate_counter * interval
-        if pyotp.utils.strings_equal(code, totp.at(candidate_time)):
+        if hmac.compare_digest(code, totp.at(candidate_time)):
             if last_counter is not None and candidate_counter <= last_counter:
                 return None
             return candidate_counter

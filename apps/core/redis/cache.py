@@ -196,18 +196,18 @@ class CacheManager:
         """Build a deterministic cache key from a function and its arguments.
 
         UUIDs, datetimes, and other non-JSON-native types are coerced via
-        ``default=str`` so the key stays stable across calls.
+        ``default=str``. Anything that ``default=str`` cannot serialize
+        raises :class:`TypeError` here rather than silently falling back
+        to ``repr()`` — two unrelated objects with identical ``repr``
+        otherwise collide on the same cache key.
         """
         func_name = f"{func.__module__}.{func.__name__}"
 
-        try:
-            args_str = json.dumps(
-                {"args": args, "kwargs": kwargs},
-                sort_keys=True,
-                default=str,
-            )
-        except (TypeError, ValueError):
-            args_str = repr({"args": args, "kwargs": kwargs})
+        args_str = json.dumps(
+            {"args": args, "kwargs": kwargs},
+            sort_keys=True,
+            default=str,
+        )
 
         hash_bytes = hashlib.sha256(args_str.encode()).digest()
         args_hash = base64.b32encode(hash_bytes).decode().rstrip("=").lower()[:16]
