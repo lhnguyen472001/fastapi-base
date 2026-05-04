@@ -127,10 +127,15 @@ class ProductCategoryService(SQLAlchemyService[ProductCategory]):
     @transactional
     async def soft_delete(self, session: SessionType, *, category_id: uuid.UUID) -> ProductCategory:
         """Soft delete a category. Products keep their rows but lose the FK."""
-        category = await self.find_or_raise(session, category_id=category_id)
-        category.deleted_at = datetime.datetime.now(datetime.UTC)
-        session.add(category)
-        return category
+        await self.find_or_raise(session, category_id=category_id)
+        deleted = await self.repository.update(
+            session,
+            item_id=category_id,
+            data={"deleted_at": datetime.datetime.now(datetime.UTC)},
+        )
+        if deleted is None:
+            raise ProductCategoryNotFoundError(message=f"Product category with id '{category_id}' not found.")
+        return deleted
 
     async def _ensure_slug_available(
         self,
@@ -189,10 +194,11 @@ class ProductService(SQLAlchemyService[Product]):
         for image in data.images:
             product.images.append(self._build_image(image))
 
-        session.add(product)
-        await session.flush()
-        await session.refresh(product, attribute_names=["images", "category"])
-        return product
+        product = await self.repository.add(session, product, expunge=False)
+        reloaded = await self.repository.find_by_id(session, product_id=product.id)
+        if reloaded is None:
+            raise ProductNotFoundError(message=f"Product with id '{product.id}' not found after create.")
+        return reloaded
 
     async def find_or_raise(self, session: SessionType, *, product_id: uuid.UUID) -> Product:
         """Fetch a product by ID or raise :class:`ProductNotFoundError`.
@@ -235,7 +241,7 @@ class ProductService(SQLAlchemyService[Product]):
         data: UpdateProductRequest,
     ) -> Product:
         """Partially update a product; optionally replace its images."""
-        product = await self.find_or_raise(session, product_id=product_id)
+        await self.find_or_raise(session, product_id=product_id)
 
         payload = data.model_dump(exclude_unset=True)
         new_images = payload.pop("images", None)
@@ -246,26 +252,41 @@ class ProductService(SQLAlchemyService[Product]):
         if "slug" in payload and payload["slug"] is not None:
             await self._ensure_slug_available(session, slug=payload["slug"], exclude_id=product_id)
 
-        for field, value in payload.items():
-            setattr(product, field, value)
+        if payload:
+            await self.repository.update(session, item_id=product_id, data=payload)
 
         if new_images is not None:
-            product.images.clear()
-            for image_data in new_images:
-                product.images.append(self._build_image(CreateProductImageRequest(**image_data)))
+            await self.image_repository.delete_where(session, ProductImage.product_id == product_id)
+            if new_images:
+                await self.image_repository.add_many(
+                    session,
+                    [
+                        {
+                            **CreateProductImageRequest(**image_data).model_dump(),
+                            "product_id": product_id,
+                        }
+                        for image_data in new_images
+                    ],
+                    expunge=False,
+                )
 
-        session.add(product)
-        await session.flush()
-        await session.refresh(product, attribute_names=["images", "category"])
-        return product
+        reloaded = await self.repository.find_by_id(session, product_id=product_id)
+        if reloaded is None:
+            raise ProductNotFoundError(message=f"Product with id '{product_id}' not found.")
+        return reloaded
 
     @transactional
     async def soft_delete(self, session: SessionType, *, product_id: uuid.UUID) -> Product:
         """Soft delete a product."""
-        product = await self.find_or_raise(session, product_id=product_id)
-        product.deleted_at = datetime.datetime.now(datetime.UTC)
-        session.add(product)
-        return product
+        await self.find_or_raise(session, product_id=product_id)
+        deleted = await self.repository.update(
+            session,
+            item_id=product_id,
+            data={"deleted_at": datetime.datetime.now(datetime.UTC)},
+        )
+        if deleted is None:
+            raise ProductNotFoundError(message=f"Product with id '{product_id}' not found.")
+        return deleted
 
     async def _ensure_slug_available(
         self,

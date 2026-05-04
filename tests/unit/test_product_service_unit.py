@@ -209,6 +209,8 @@ class TestProductServiceCreate:
                 CreateProductImageRequest(url="https://cdn/b.jpg", alt_text="b", display_order=1),
             ]
         )
+        product_repo.add.side_effect = lambda _session, instance, expunge=True: instance
+        product_repo.find_by_id.side_effect = lambda _session, *, product_id: product_repo.add.await_args.args[1]
 
         product = await product_service.create(session, data=data)
 
@@ -217,14 +219,14 @@ class TestProductServiceCreate:
         assert len(product.images) == 2
         assert product.images[0].url == "https://cdn/a.jpg"
         assert product.images[0].is_primary is True
-        session.add.assert_called_once_with(product)
-        session.flush.assert_awaited()
+        product_repo.add.assert_awaited_once()
+        product_repo.find_by_id.assert_awaited_once()
 
     async def test_create_rejects_slug_conflict(self, session, product_service, product_repo) -> None:
         product_repo.find_by_slug.return_value = Product(name="X", slug="dup")
         with pytest.raises(ProductSlugConflictError):
             await product_service.create(session, data=_base_create_payload(slug="dup"))
-        session.add.assert_not_called()
+        product_repo.add.assert_not_awaited()
 
     async def test_create_rejects_missing_category(self, session, product_service, category_repo) -> None:
         category_repo.find_by_id.return_value = None
@@ -290,12 +292,13 @@ class TestProductServiceUpdate:
             data=UpdateProductRequest(name="New", is_featured=True),
         )
 
-        assert existing.name == "New"
-        assert existing.is_featured is True
-        # slug left untouched because not in payload
-        assert existing.slug == "old"
+        product_repo.update.assert_awaited_once()
+        update_payload = product_repo.update.await_args.kwargs["data"]
+        assert update_payload == {"name": "New", "is_featured": True}
 
-    async def test_update_replaces_images_when_provided(self, session, product_service, product_repo) -> None:
+    async def test_update_replaces_images_when_provided(
+        self, session, product_service, product_repo, image_repo
+    ) -> None:
         pid = uuid.uuid4()
         existing = Product(
             id=pid,
@@ -315,8 +318,12 @@ class TestProductServiceUpdate:
             data=UpdateProductRequest(images=[CreateProductImageRequest(url="https://cdn/new.jpg", is_primary=True)]),
         )
 
-        assert len(existing.images) == 1
-        assert existing.images[0].url == "https://cdn/new.jpg"
+        image_repo.delete_where.assert_awaited_once()
+        image_repo.add_many.assert_awaited_once()
+        add_many_rows = image_repo.add_many.await_args.args[1]
+        assert len(add_many_rows) == 1
+        assert add_many_rows[0]["url"] == "https://cdn/new.jpg"
+        assert add_many_rows[0]["product_id"] == pid
 
 
 class TestProductServiceSoftDelete:
@@ -326,8 +333,14 @@ class TestProductServiceSoftDelete:
         existing.images = []
         existing.deleted_at = None
         product_repo.find_by_id.return_value = existing
+        # repo.update returns the row with deleted_at populated
+        deleted_marker = Product(id=pid, name="X", slug="x", retail_price=Decimal("1000"))
+        deleted_marker.deleted_at = object()  # sentinel
+        product_repo.update.return_value = deleted_marker
 
         result = await product_service.soft_delete(session, product_id=pid)
 
-        assert result is existing
-        assert existing.deleted_at is not None
+        assert result is deleted_marker
+        update_payload = product_repo.update.await_args.kwargs["data"]
+        assert "deleted_at" in update_payload
+        assert update_payload["deleted_at"] is not None
