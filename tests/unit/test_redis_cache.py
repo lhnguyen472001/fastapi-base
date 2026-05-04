@@ -42,7 +42,7 @@ class TestNoOpMode:
     @pytest.mark.asyncio
     async def test_set_returns_false(self) -> None:
         cache = CacheManager(redis_client=None)
-        assert await cache.set("k", {"v": 1}) is False
+        assert await cache.set("k", {"v": 1}, ttl=60) is False
 
     @pytest.mark.asyncio
     async def test_delete_returns_zero(self) -> None:
@@ -67,7 +67,7 @@ class TestSerialization:
         cache = CacheManager(redis_client=redis)
         uid = uuid.uuid4()
 
-        ok = await cache.set("k", {"id": uid})
+        ok = await cache.set("k", {"id": uid}, ttl=60)
 
         assert ok is True
         redis.set.assert_awaited_once()
@@ -80,7 +80,7 @@ class TestSerialization:
         cache = CacheManager(redis_client=redis)
         when = dt.datetime(2026, 4, 29, 12, 0, 0, tzinfo=dt.UTC)
 
-        ok = await cache.set("k", {"at": when})
+        ok = await cache.set("k", {"at": when}, ttl=60)
 
         assert ok is True
         stored = redis.set.await_args.args[1]
@@ -100,7 +100,7 @@ class TestSerialization:
             def __repr__(self) -> str:
                 return "<Bad>"
 
-        ok = await cache.set("k", _Bad())
+        ok = await cache.set("k", _Bad(), ttl=60)
         assert ok is False
         redis.set.assert_not_awaited()
 

@@ -2,21 +2,16 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from dependency_injector.wiring import Provide, inject
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.auth.containers import AuthContainer
 from apps.auth.exceptions import InvalidTokenError
+from apps.auth.services import AuthService
 from apps.core.database.session import session_factory
-
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
-
-    from apps.auth.services import AuthService
-    from apps.user.models import User
+from apps.user.models import User
 
 bearer_scheme = HTTPBearer(auto_error=False, description="Bearer JWT access token")
 

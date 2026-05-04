@@ -201,6 +201,13 @@ class Post(UUIDAuditBase, HasSoftDeletedMixin):
     # Maintained by a Postgres trigger over title/excerpt/content_text.
     search_vector: Mapped[str | None] = mapped_column(TSVECTOR, nullable=True)
 
+    # Every relationship is ``lazy="raise"`` on purpose: implicit lazy-loading
+    # in async SQLAlchemy code paths raises at runtime rather than silently
+    # firing a synchronous DB call. Callers MUST eager-load via
+    # ``selectinload(Post.content)`` / ``selectinload(Post.category)`` /
+    # ``selectinload(Post.tags)`` (or ``joinedload`` where appropriate) on the
+    # SELECT that builds the Post. See :mod:`apps.blog.repositories` for
+    # ready-made loader options.
     content: Mapped[PostContent | None] = relationship(
         "PostContent",
         back_populates="post",

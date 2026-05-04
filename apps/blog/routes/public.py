@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.blog.containers import BlogContainer
 from apps.blog.enums import PostStatus
-from apps.blog.routes.admin import _build_post_detail
 from apps.blog.schemas import (
     CategoryResponse,
     ListCategoriesRequest,
@@ -74,10 +73,20 @@ async def get_published_post_by_slug(
     session: AsyncSession = Depends(session_factory),
     post_service: PostService = Depends(Provide[BlogContainer.post_service]),
 ) -> APIResponse[PostDetailResponse]:
-    """Fetch a published post by slug. 404s for any non-published row."""
-    post = await post_service.get_published_by_slug(session, workspace_id=workspace.id, slug=post_slug)
+    """Fetch a published post by slug. 404s for any non-published row.
+
+    Read-through Redis cache (TTL 5 min, workspace-pattern invalidation on
+    every post mutation). The service returns the fully serialized
+    :class:`PostDetailResponse` whether the value comes from cache or the
+    database.
+    """
+    detail = await post_service.get_published_detail_by_slug(
+        session,
+        workspace_id=workspace.id,
+        slug=post_slug,
+    )
     return APIResponse[PostDetailResponse].success(
-        data=_build_post_detail(post),
+        data=detail,
         message="Post retrieved successfully.",
     )
 

@@ -236,3 +236,36 @@ class PostDetailResponse(PostResponse):
     content_text: str
     category: CategoryResponse | None = None
     tags: list[TagResponse] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Autosave schemas
+# ---------------------------------------------------------------------------
+
+
+class AutosavePostRequest(RequestObjectSchema):
+    """Request body for the lightweight autosave endpoint.
+
+    Only ``content_json`` is accepted; all other post fields are managed
+    via the full ``PATCH`` endpoint. The server persists this to Redis
+    (write-behind) and lazily flushes it to Postgres.
+    """
+
+    content_json: dict = Field(..., description="Tiptap ProseMirror document.")
+
+
+class AutosaveResponse(ResponseObjectSchema):
+    """Response for an autosave request.
+
+    ``persisted`` is True iff the same content was already in Postgres at
+    request time (i.e. the autosave was a no-op short-circuit). When
+    False, the body lives in Redis only and a future flush will write it
+    through.
+    """
+
+    post_id: uuid.UUID
+    content_hash: str
+    word_count: int
+    reading_minutes: int
+    updated_at: datetime.datetime
+    persisted: bool

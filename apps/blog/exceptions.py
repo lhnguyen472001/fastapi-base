@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import enum
 
+from fastapi import status as http_status
+
+from apps.core.exceptions.base import BackendError
 from apps.core.exceptions.errors import BadRequestError, ConflictError, NotFoundError
 
 
@@ -19,6 +22,9 @@ class BlogErrorCodes(enum.StrEnum):
     BLOG007 = "BLOG007"  # Invalid post status transition
     BLOG008 = "BLOG008"  # Too many tags attached to the post
     BLOG009 = "BLOG009"  # Cross-resource workspace mismatch (e.g. tag/category from another workspace)
+    BLOG019 = "BLOG019"  # Post cannot be published — content readiness check failed
+    BLOG020 = "BLOG020"  # Autosave attempted on a post in an unsupported status (e.g. ARCHIVED)
+    BLOG021 = "BLOG021"  # Autosave subsystem unavailable (Redis disabled / unreachable)
 
 
 class PostNotFoundError(NotFoundError):
@@ -100,3 +106,35 @@ class BlogResourceWorkspaceMismatchError(BadRequestError):
 
     def __init__(self, *, message: str = "Referenced resource belongs to a different workspace.") -> None:
         super().__init__(code=self.code, message=message)
+
+
+class PostPublishContentError(BadRequestError):
+    """Raised when ``/publish`` is called on a post that fails readiness checks (empty body, etc.)."""
+
+    code: str = BlogErrorCodes.BLOG019
+
+    def __init__(self, *, message: str = "Post is not ready to publish.") -> None:
+        super().__init__(code=self.code, message=message)
+
+
+class PostAutosaveOnArchivedError(BadRequestError):
+    """Raised when autosave targets an archived post; archived posts must be unpublished first."""
+
+    code: str = BlogErrorCodes.BLOG020
+
+    def __init__(self, *, message: str = "Autosave is not allowed on archived posts.") -> None:
+        super().__init__(code=self.code, message=message)
+
+
+class PostAutosaveUnavailableError(BackendError):
+    """Raised when the autosave subsystem (Redis) is disabled or unreachable.
+
+    Surfaces as 503 because the feature presumes a functioning Redis; the
+    plan explicitly rejected the silent-fallback variant.
+    """
+
+    code: str = BlogErrorCodes.BLOG021
+    status_code: int = http_status.HTTP_503_SERVICE_UNAVAILABLE
+
+    def __init__(self, *, message: str = "Autosave is currently unavailable.") -> None:
+        super().__init__(message=message)

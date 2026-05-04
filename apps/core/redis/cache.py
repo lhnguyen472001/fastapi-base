@@ -70,10 +70,18 @@ class CacheManager:
             logger.warning("CacheManager - get - non-JSON value, treating as miss", key=key)
             return None
 
-    async def set(self, key: str, value: Any, ttl: int | None = None) -> bool:
-        """Serialize ``value`` to JSON and store with optional TTL."""
+    async def set(self, key: str, value: Any, ttl: int) -> bool:
+        """Serialize ``value`` to JSON and store with the given TTL.
+
+        ``ttl`` is required (in seconds, must be positive). Caching
+        without expiry leaks Redis memory; a positive TTL is enforced
+        project-wide.
+        """
         if not self.redis:
             return False
+        if ttl <= 0:
+            msg = f"CacheManager.set requires a positive TTL; got {ttl}."
+            raise ValueError(msg)
 
         try:
             serialized = json.dumps(value, default=str)

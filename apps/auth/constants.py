@@ -23,3 +23,14 @@ GOOGLE_USERINFO_ENDPOINT: Final[str] = "https://www.googleapis.com/oauth2/v3/use
 GOOGLE_OAUTH_SCOPES: Final[str] = "openid email profile"
 
 GOOGLE_OAUTH_HTTP_TIMEOUT_SECONDS: Final[float] = 10.0
+
+# slowapi rate-limit budgets per remote address. Strings follow the
+# ``"<count>/<period>"`` syntax that ``Limiter.limit`` accepts.
+RATE_LIMIT_REGISTER: Final[str] = "5/minute"
+RATE_LIMIT_VERIFY_EMAIL: Final[str] = "10/minute"
+RATE_LIMIT_RESEND_VERIFICATION: Final[str] = "5/minute"
+RATE_LIMIT_LOGIN: Final[str] = "5/minute"
+RATE_LIMIT_LOGIN_2FA: Final[str] = "10/minute"
+RATE_LIMIT_REFRESH: Final[str] = "30/minute"
+RATE_LIMIT_DISABLE_2FA: Final[str] = "5/minute"
+RATE_LIMIT_GOOGLE_CALLBACK: Final[str] = "10/minute"

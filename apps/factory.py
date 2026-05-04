@@ -20,8 +20,10 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from apps.auth.containers import AuthContainer
 from apps.auth.routes import auth_router
+from apps.blog.containers import BlogContainer
 from apps.blog.routes.admin import blog_admin_router
 from apps.blog.routes.public import blog_public_router
+from apps.blog.sweeper import start_sweeper_task, stop_sweeper_task
 from apps.core.database.session import async_session_factory
 from apps.core.exceptions.base import BackendError
 from apps.core.exceptions.handlers import (
@@ -77,11 +79,19 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 admin_role_name=app_settings.rbac.system_admin_role_name,
             )
 
+    autosave_store = BlogContainer.autosave_store()
+    sweeper_task = start_sweeper_task(
+        async_session_factory,
+        BlogContainer.post_service(),
+        autosave_store,
+    )
+
     logger.info("factory - lifespan - Application started")
     try:
         yield
     finally:
         logger.info("factory - lifespan - Shutting down")
+        await stop_sweeper_task(sweeper_task)
         await AuthContainer.google_oauth_client().aclose()
         await close_redis_client()
 

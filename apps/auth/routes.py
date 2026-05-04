@@ -4,7 +4,18 @@ from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.auth.constants import OAUTH_COOKIE_PATH, OAUTH_STATE_COOKIE_NAME
+from apps.auth.constants import (
+    OAUTH_COOKIE_PATH,
+    OAUTH_STATE_COOKIE_NAME,
+    RATE_LIMIT_DISABLE_2FA,
+    RATE_LIMIT_GOOGLE_CALLBACK,
+    RATE_LIMIT_LOGIN,
+    RATE_LIMIT_LOGIN_2FA,
+    RATE_LIMIT_REFRESH,
+    RATE_LIMIT_REGISTER,
+    RATE_LIMIT_RESEND_VERIFICATION,
+    RATE_LIMIT_VERIFY_EMAIL,
+)
 from apps.auth.containers import AuthContainer
 from apps.auth.dependencies import get_current_user
 from apps.auth.schemas import (
@@ -48,7 +59,7 @@ def _client_metadata(request: Request) -> tuple[str | None, str | None]:
     response_model=APIResponse[RegisterResponse],
     status_code=status.HTTP_202_ACCEPTED,
 )
-@limiter.limit("5/minute")
+@limiter.limit(RATE_LIMIT_REGISTER)
 @inject
 async def register(
     request: Request,
@@ -63,7 +74,7 @@ async def register(
 
 
 @auth_router.post("/verify-email", response_model=APIResponse[MessageResponse])
-@limiter.limit("10/minute")
+@limiter.limit(RATE_LIMIT_VERIFY_EMAIL)
 @inject
 async def verify_email(
     request: Request,
@@ -83,7 +94,7 @@ async def verify_email(
     response_model=APIResponse[MessageResponse],
     status_code=status.HTTP_202_ACCEPTED,
 )
-@limiter.limit("5/minute")
+@limiter.limit(RATE_LIMIT_RESEND_VERIFICATION)
 @inject
 async def resend_verification(
     request: Request,
@@ -105,7 +116,7 @@ async def resend_verification(
     "/login",
     response_model=APIResponse[TokenPair | TwoFactorChallenge],
 )
-@limiter.limit("5/minute")
+@limiter.limit(RATE_LIMIT_LOGIN)
 @inject
 async def login(
     request: Request,
@@ -122,7 +133,7 @@ async def login(
 
 
 @auth_router.post("/login/2fa", response_model=APIResponse[TokenPair])
-@limiter.limit("10/minute")
+@limiter.limit(RATE_LIMIT_LOGIN_2FA)
 @inject
 async def login_2fa(
     request: Request,
@@ -145,7 +156,7 @@ async def login_2fa(
 
 
 @auth_router.post("/refresh", response_model=APIResponse[TokenPair])
-@limiter.limit("30/minute")
+@limiter.limit(RATE_LIMIT_REFRESH)
 @inject
 async def refresh(
     request: Request,
@@ -213,7 +224,7 @@ async def enable_2fa(
 
 
 @auth_router.post("/2fa/disable", response_model=APIResponse[MessageResponse])
-@limiter.limit("5/minute")
+@limiter.limit(RATE_LIMIT_DISABLE_2FA)
 @inject
 async def disable_2fa(
     request: Request,
@@ -269,7 +280,7 @@ async def google_authorize(
     "/oauth/google/callback",
     response_model=APIResponse[TokenPair | TwoFactorChallenge],
 )
-@limiter.limit("10/minute")
+@limiter.limit(RATE_LIMIT_GOOGLE_CALLBACK)
 @inject
 async def google_callback(
     request: Request,

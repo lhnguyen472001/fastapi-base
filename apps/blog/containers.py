@@ -12,6 +12,8 @@ from apps.blog.repositories import (
     TagRepository,
 )
 from apps.blog.services import CategoryService, PostService, TagService
+from apps.blog.store import AutosaveStore
+from apps.core.redis import CacheManager, get_redis_client
 
 
 class BlogContainer(containers.DeclarativeContainer):
@@ -22,6 +24,18 @@ class BlogContainer(containers.DeclarativeContainer):
             "apps.blog.routes.admin",
             "apps.blog.routes.public",
         ],
+    )
+
+    # Cache + autosave infrastructure. The Singleton wrappers cache the
+    # CacheManager / AutosaveStore instances; ``providers.Callable``
+    # resolves to the lazily-built RedisClient singleton each time.
+    cache_manager = providers.Singleton(
+        CacheManager,
+        redis_client=providers.Callable(get_redis_client),
+    )
+    autosave_store = providers.Singleton(
+        AutosaveStore,
+        redis_client=providers.Callable(get_redis_client),
     )
 
     category_repository = providers.Factory(CategoryRepository)
@@ -39,4 +53,6 @@ class BlogContainer(containers.DeclarativeContainer):
         content_repository=post_content_repository,
         post_tag_repository=post_tag_repository,
         category_repository=category_repository,
+        cache=cache_manager,
+        autosave_store=autosave_store,
     )

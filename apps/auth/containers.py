@@ -57,7 +57,6 @@ class AuthContainer(containers.DeclarativeContainer):
     )
     cache_manager = providers.Singleton(CacheManager, redis_client=providers.Callable(get_redis_client))
 
-    # Auth sub-services (per 3.2 split).
     token_service = providers.Factory(
         TokenService,
         user_service=user_service,

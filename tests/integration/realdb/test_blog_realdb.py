@@ -39,6 +39,8 @@ from apps.blog.schemas import (
     UpdatePostRequest,
 )
 from apps.blog.services import CategoryService, PostService, TagService
+from apps.blog.store import AutosaveStore
+from apps.core.redis import CacheManager
 from apps.user.repositories import UserRepository
 from apps.user.schemas import CreateUserRequest
 from apps.user.services import UserService
@@ -70,12 +72,17 @@ def tag_service() -> TagService:
 
 @pytest.fixture
 def post_service() -> PostService:
+    # Disabled cache + autosave by passing redis_client=None — the existing
+    # realdb tests assert DB behavior, not Redis. Cache and autosave are
+    # exercised by their own dedicated test modules.
     return PostService(
         repository=PostRepository(),
         content_repository=PostContentRepository(),
         post_tag_repository=PostTagRepository(),
         category_repository=CategoryRepository(),
         tag_repository=TagRepository(),
+        cache=CacheManager(redis_client=None),
+        autosave_store=AutosaveStore(redis_client=None),
     )
 
 
@@ -311,7 +318,11 @@ async def test_publish_then_unpublish(
         real_session,
         workspace_id=workspace.id,
         author_id=user.id,
-        data=CreatePostRequest(title="t", slug=None, content_json=_doc("body")),
+        data=CreatePostRequest(
+            title="Publishable post",
+            slug=None,
+            content_json=_doc("This body is intentionally long enough to clear the publish readiness gate."),
+        ),
     )
     await real_session.flush()
     assert post.status == PostStatus.DRAFT.value
@@ -340,7 +351,11 @@ async def test_cannot_publish_already_published(
         real_session,
         workspace_id=workspace.id,
         author_id=user.id,
-        data=CreatePostRequest(title="t", slug=None, content_json=_doc("body")),
+        data=CreatePostRequest(
+            title="Publishable post",
+            slug=None,
+            content_json=_doc("This body is intentionally long enough to clear the publish readiness gate."),
+        ),
     )
     await post_service.publish(real_session, workspace_id=workspace.id, post_id=post.id)
     await real_session.flush()
@@ -367,7 +382,11 @@ async def test_get_published_by_slug_excludes_drafts(
         real_session,
         workspace_id=workspace.id,
         author_id=user.id,
-        data=CreatePostRequest(title="hidden", slug="hidden", content_json=_doc("body")),
+        data=CreatePostRequest(
+            title="hidden",
+            slug="hidden",
+            content_json=_doc("This body is intentionally long enough to clear the publish readiness gate."),
+        ),
     )
     await real_session.flush()
 

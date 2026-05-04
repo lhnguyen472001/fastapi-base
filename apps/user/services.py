@@ -7,6 +7,7 @@ from collections.abc import Sequence
 
 from apps.auth.security import hash_password_async
 from apps.core.database.filters import LimitOffsetPaginationFilter
+from apps.core.database.transactional import transactional
 from apps.core.database.types import SessionType
 from apps.core.services.base import SQLAlchemyService
 from apps.user.exceptions import UserAlreadyExistsError, UserNotFoundError
@@ -33,6 +34,7 @@ class UserService(SQLAlchemyService[User]):
         """
         super().__init__(repository)
 
+    @transactional
     async def create(self, session: SessionType, *, data: CreateUserRequest) -> User:
         """Create a new user.
 
@@ -62,6 +64,7 @@ class UserService(SQLAlchemyService[User]):
         }
         return await self.repository.add(session, payload, expunge=False)
 
+    @transactional
     async def get_or_create_oauth_user(
         self,
         session: SessionType,
@@ -89,16 +92,22 @@ class UserService(SQLAlchemyService[User]):
         Returns:
             The persisted :class:`User` instance.
         """
-        # 1. Already linked? Return as-is.
+        # 1. Already linked? Return as-is (with any missing OAuth fields backfilled).
         existing = await self.repository.find_by_email_or_username(session, email=email)
         if existing is not None:
+            link_payload: dict = {}
             if existing.google_sub is None:
-                existing.google_sub = google_sub
+                link_payload["google_sub"] = google_sub
             if existing.email_verified_at is None:
-                existing.email_verified_at = datetime.datetime.now(datetime.UTC)
+                link_payload["email_verified_at"] = datetime.datetime.now(datetime.UTC)
             if not existing.is_active:
-                existing.is_active = True
-            return existing
+                link_payload["is_active"] = True
+            if not link_payload:
+                return existing
+            updated = await self.repository.update(session, item_id=existing.id, data=link_payload)
+            if updated is None:
+                raise UserNotFoundError(message=f"User with id '{existing.id}' not found.")
+            return updated
 
         # 2. Brand new user — derive a unique username from the hint.
         username = await self._unique_username(session, username_hint)
@@ -167,6 +176,7 @@ class UserService(SQLAlchemyService[User]):
             **filter_kwargs,
         )
 
+    @transactional
     async def update(self, session: SessionType, *, user_id: uuid.UUID, data: UpdateUserRequest) -> User:
         """Update an existing user.
 
@@ -207,6 +217,7 @@ class UserService(SQLAlchemyService[User]):
             raise UserNotFoundError(message=f"User with id '{user_id}' not found.")
         return updated
 
+    @transactional
     async def soft_delete(self, session: SessionType, *, user_id: uuid.UUID) -> User:
         """Soft-delete a user by setting ``deleted_at`` to the current UTC time.
 
@@ -220,9 +231,15 @@ class UserService(SQLAlchemyService[User]):
         Raises:
             UserNotFoundError: If the user does not exist or is already soft-deleted.
         """
-        user = await self.find_or_raise(session, user_id=user_id)
-        user.deleted_at = datetime.datetime.now(datetime.UTC)
-        return user
+        await self.find_or_raise(session, user_id=user_id)
+        deleted = await self.repository.update(
+            session,
+            item_id=user_id,
+            data={"deleted_at": datetime.datetime.now(datetime.UTC)},
+        )
+        if deleted is None:
+            raise UserNotFoundError(message=f"User with id '{user_id}' not found.")
+        return deleted
 
     async def get_by_email_or_username(
         self,
