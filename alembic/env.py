@@ -23,6 +23,8 @@ from apps.settings import app_settings  # noqa: E402
 from apps.user import models as _user_models  # noqa: E402, F401
 from apps.rbac import models as _rbac_models  # noqa: E402, F401
 from apps.product import models as _product_models  # noqa: E402, F401
+from apps.workspace import models as _workspace_models  # noqa: E402, F401
+from apps.blog import models as _blog_models  # noqa: E402, F401
 
 target_metadata = orm_registry.metadata
 

@@ -20,6 +20,8 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from apps.auth.containers import AuthContainer
 from apps.auth.routes import auth_router
+from apps.blog.routes.admin import blog_admin_router
+from apps.blog.routes.public import blog_public_router
 from apps.core.database.session import async_session_factory
 from apps.core.exceptions.base import BackendError
 from apps.core.exceptions.handlers import (
@@ -36,6 +38,7 @@ from apps.rbac.routes import rbac_router
 from apps.rbac.seeders import sync_registered_resources
 from apps.settings import app_settings
 from apps.user.routes import user_router
+from apps.workspace.routes import workspace_router
 
 from .containers import AppContainer
 
@@ -133,6 +136,9 @@ def application_factory() -> FastAPI:
     app.include_router(rbac_router, prefix=API_V1_PREFIX)
     app.include_router(product_router, prefix=API_V1_PREFIX)
     app.include_router(product_category_router, prefix=API_V1_PREFIX)
+    app.include_router(workspace_router, prefix=API_V1_PREFIX)
+    app.include_router(blog_admin_router, prefix=API_V1_PREFIX)
+    app.include_router(blog_public_router, prefix=API_V1_PREFIX)
 
     @app.get("/", include_in_schema=False)
     async def _() -> RedirectResponse:
