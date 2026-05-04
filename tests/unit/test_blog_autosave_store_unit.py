@@ -15,7 +15,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from apps.blog.constants import AUTOSAVE_DIRTY_SET, AUTOSAVE_KEY_PREFIX, AUTOSAVE_TTL_SECONDS
-from apps.blog.store import AutosaveSnapshot, AutosaveStore
+from apps.blog.store import (
+    _MARK_FLUSHED_SCRIPT,
+    _SAVE_SCRIPT,
+    AutosaveSnapshot,
+    AutosaveStore,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -100,9 +105,8 @@ class TestDisabledMode:
 
 class TestSave:
     @pytest.mark.asyncio
-    async def test_save_hsets_full_mapping_and_marks_dirty(self) -> None:
+    async def test_save_evals_save_script_with_full_args(self) -> None:
         redis, inner = _make_redis_mock()
-        redis.hget = AsyncMock(return_value=None)  # no existing flushed_hash
         store = AutosaveStore(redis_client=redis)
 
         post_id = uuid.uuid4()
@@ -120,22 +124,35 @@ class TestSave:
 
         assert ok is True
 
-        redis.hset.assert_awaited_once()
-        hset_call = redis.hset.await_args
-        assert hset_call.args[0] == f"{AUTOSAVE_KEY_PREFIX}:{post_id}"
-        mapping = hset_call.kwargs["mapping"]
-        assert mapping["content_hash"] == "abc"
-        assert mapping["flushed_hash"] == ""
-        assert mapping["word_count"] == "42"
-        assert mapping["post_id"] == str(post_id)
-
-        redis.expire.assert_awaited_once_with(f"{AUTOSAVE_KEY_PREFIX}:{post_id}", AUTOSAVE_TTL_SECONDS)
-        inner.sadd.assert_awaited_once_with(AUTOSAVE_DIRTY_SET, str(post_id))
+        inner.eval.assert_awaited_once()
+        call = inner.eval.await_args
+        # Positional args: script source, numkeys, then KEYS followed by ARGV.
+        assert call.args[0] == _SAVE_SCRIPT
+        assert call.args[1] == 2
+        # KEYS
+        assert call.args[2] == f"{AUTOSAVE_KEY_PREFIX}:{post_id}"
+        assert call.args[3] == AUTOSAVE_DIRTY_SET
+        # ARGV[1..9]
+        assert call.args[4] == str(post_id)
+        assert call.args[5] == str(AUTOSAVE_TTL_SECONDS)
+        assert call.args[6] == str(post_id)
+        assert call.args[7] == str(workspace_id)
+        assert call.args[8] == str(author_id)
+        # content_json (ARGV[6]) is the compact JSON serialization
+        assert "hi" in call.args[9]
+        assert call.args[10] == "abc"  # content_hash
+        assert call.args[11] == "42"  # word_count
 
     @pytest.mark.asyncio
-    async def test_save_preserves_existing_flushed_hash(self) -> None:
-        redis, _ = _make_redis_mock()
-        redis.hget = AsyncMock(return_value="prior_flushed_hash")
+    async def test_save_runs_atomic_script(self) -> None:
+        """``flushed_hash`` preservation is now a Lua-level guarantee.
+
+        The Python wrapper no longer reads ``flushed_hash`` and writes it
+        back; both happen inside ``_SAVE_SCRIPT`` via a single ``EVAL``.
+        Real-Redis preservation is verified in the realdb integration
+        suite (``test_blog_autosave_realdb.py``).
+        """
+        redis, inner = _make_redis_mock()
         store = AutosaveStore(redis_client=redis)
 
         await store.save(
@@ -147,8 +164,10 @@ class TestSave:
             word_count=1,
         )
 
-        mapping = redis.hset.await_args.kwargs["mapping"]
-        assert mapping["flushed_hash"] == "prior_flushed_hash"
+        # Crucially we do NOT call hget separately on the Python side.
+        redis.hget.assert_not_awaited()
+        inner.eval.assert_awaited_once()
+        assert inner.eval.await_args.args[0] == _SAVE_SCRIPT
 
 
 class TestGet:
@@ -194,15 +213,35 @@ class TestGet:
 
 class TestMarkFlushed:
     @pytest.mark.asyncio
-    async def test_mark_flushed_sets_field_and_clears_dirty(self) -> None:
+    async def test_mark_flushed_evals_cas_script(self) -> None:
         redis, inner = _make_redis_mock()
+        # Mock returns 1 = CAS succeeded.
+        inner.eval = AsyncMock(return_value=1)
         store = AutosaveStore(redis_client=redis)
         post_id = uuid.uuid4()
 
-        await store.mark_flushed(post_id, content_hash="flushed-hash")
+        result = await store.mark_flushed(post_id, content_hash="flushed-hash")
 
-        redis.hset.assert_awaited_once_with(f"{AUTOSAVE_KEY_PREFIX}:{post_id}", "flushed_hash", "flushed-hash")
-        inner.srem.assert_awaited_once_with(AUTOSAVE_DIRTY_SET, str(post_id))
+        assert result is True
+        inner.eval.assert_awaited_once()
+        call = inner.eval.await_args
+        assert call.args[0] == _MARK_FLUSHED_SCRIPT
+        assert call.args[1] == 2
+        assert call.args[2] == f"{AUTOSAVE_KEY_PREFIX}:{post_id}"
+        assert call.args[3] == AUTOSAVE_DIRTY_SET
+        assert call.args[4] == str(post_id)
+        assert call.args[5] == "flushed-hash"
+
+    @pytest.mark.asyncio
+    async def test_mark_flushed_returns_false_on_cas_rejection(self) -> None:
+        redis, inner = _make_redis_mock()
+        # 0 = newer save raced; CAS rejected.
+        inner.eval = AsyncMock(return_value=0)
+        store = AutosaveStore(redis_client=redis)
+
+        result = await store.mark_flushed(uuid.uuid4(), content_hash="stale")
+
+        assert result is False
 
 
 class TestIsDirty:

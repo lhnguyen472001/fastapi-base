@@ -649,3 +649,151 @@ async def test_patch_discards_autosave_snapshot(
     await real_session.flush()
 
     assert await autosave_store.get(post.id) is None
+
+
+# ---------------------------------------------------------------------------
+# AutosaveStore — Lua-CAS semantics (real Redis)
+# ---------------------------------------------------------------------------
+#
+# These tests exercise the AutosaveStore primitive directly (no PostService),
+# proving the atomicity guarantees promised by the ``_SAVE_SCRIPT`` and
+# ``_MARK_FLUSHED_SCRIPT`` Lua scripts:
+#
+# 1. ``save`` preserves an already-set ``flushed_hash`` across subsequent
+#    autosaves (no clobbering by stale read-then-write).
+# 2. ``mark_flushed`` is a compare-and-set on ``content_hash`` — it accepts
+#    when the recorded hash still matches the in-Redis value, and rejects
+#    (returning False, leaving the post dirty) when a concurrent save
+#    advanced ``content_hash`` mid-flush.
+
+
+async def test_mark_flushed_cas_succeeds_on_matching_content_hash(
+    autosave_store: AutosaveStore,
+    redis_cleanup: list[uuid.UUID],
+) -> None:
+    """``mark_flushed`` returns True and clears the dirty bit when hashes match."""
+    post_id = uuid.uuid4()
+    redis_cleanup.append(post_id)
+
+    saved = await autosave_store.save(
+        post_id=post_id,
+        workspace_id=uuid.uuid4(),
+        author_id=uuid.uuid4(),
+        content_json=_doc("hello"),
+        content_hash="hash-A",
+        word_count=1,
+    )
+    assert saved is True
+
+    snap = await autosave_store.get(post_id)
+    assert snap is not None
+    assert snap.content_hash == "hash-A"
+    assert snap.flushed_hash == ""
+    assert snap.is_dirty is True
+
+    accepted = await autosave_store.mark_flushed(post_id, content_hash="hash-A")
+    assert accepted is True
+
+    snap = await autosave_store.get(post_id)
+    assert snap is not None
+    assert snap.flushed_hash == "hash-A"
+    assert snap.is_dirty is False
+
+    seen = [p async for p in autosave_store.iter_dirty()]
+    assert post_id not in seen
+
+
+async def test_mark_flushed_cas_rejects_when_concurrent_save_advanced_content(
+    autosave_store: AutosaveStore,
+    redis_cleanup: list[uuid.UUID],
+) -> None:
+    """If a concurrent autosave bumped content_hash mid-flush, CAS must reject.
+
+    Simulates the race by calling ``save`` twice with different hashes
+    before ``mark_flushed`` runs. The flush is recording ``hash-A`` as
+    just-written, but Redis already shows ``hash-B`` from the racing
+    save — the CAS must refuse, leaving the post dirty for the next
+    sweeper tick.
+    """
+    post_id = uuid.uuid4()
+    redis_cleanup.append(post_id)
+    workspace_id = uuid.uuid4()
+    author_id = uuid.uuid4()
+
+    await autosave_store.save(
+        post_id=post_id,
+        workspace_id=workspace_id,
+        author_id=author_id,
+        content_json=_doc("first"),
+        content_hash="hash-A",
+        word_count=1,
+    )
+    await autosave_store.save(
+        post_id=post_id,
+        workspace_id=workspace_id,
+        author_id=author_id,
+        content_json=_doc("second"),
+        content_hash="hash-B",
+        word_count=1,
+    )
+
+    rejected = await autosave_store.mark_flushed(post_id, content_hash="hash-A")
+    assert rejected is False
+
+    snap = await autosave_store.get(post_id)
+    assert snap is not None
+    assert snap.content_hash == "hash-B"
+    assert snap.flushed_hash == ""
+    assert snap.is_dirty is True
+
+    seen = [p async for p in autosave_store.iter_dirty()]
+    assert post_id in seen
+
+    accepted = await autosave_store.mark_flushed(post_id, content_hash="hash-B")
+    assert accepted is True
+    snap = await autosave_store.get(post_id)
+    assert snap is not None
+    assert snap.flushed_hash == "hash-B"
+    assert snap.is_dirty is False
+
+
+async def test_save_preserves_existing_flushed_hash_atomically(
+    autosave_store: AutosaveStore,
+    redis_cleanup: list[uuid.UUID],
+) -> None:
+    """A subsequent ``save`` must not clobber the previously-marked flushed_hash.
+
+    This guarantee is delivered by the ``_SAVE_SCRIPT`` Lua: it does HGET
+    of the existing ``flushed_hash`` and HSET of all fields (including
+    that preserved value) inside a single EVAL, eliminating the
+    read-then-write TOCTOU window of the prior implementation.
+    """
+    post_id = uuid.uuid4()
+    redis_cleanup.append(post_id)
+    workspace_id = uuid.uuid4()
+    author_id = uuid.uuid4()
+
+    await autosave_store.save(
+        post_id=post_id,
+        workspace_id=workspace_id,
+        author_id=author_id,
+        content_json=_doc("v1"),
+        content_hash="hash-A",
+        word_count=1,
+    )
+    await autosave_store.mark_flushed(post_id, content_hash="hash-A")
+
+    await autosave_store.save(
+        post_id=post_id,
+        workspace_id=workspace_id,
+        author_id=author_id,
+        content_json=_doc("v2"),
+        content_hash="hash-B",
+        word_count=2,
+    )
+
+    snap = await autosave_store.get(post_id)
+    assert snap is not None
+    assert snap.content_hash == "hash-B"
+    assert snap.flushed_hash == "hash-A"
+    assert snap.is_dirty is True

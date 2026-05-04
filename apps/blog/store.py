@@ -50,6 +50,51 @@ _LOCK_RELEASE_SCRIPT: str = (
     "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
 )
 
+# Lua script: atomically rewrite the autosave HASH while preserving the
+# existing flushed_hash (or seeding it to "" on first write), then refresh the
+# TTL and add the post-id to the dirty set. Folds the previous read-then-write
+# sequence (which had a TOCTOU window where a concurrent mark_flushed could be
+# clobbered) into a single EVAL.
+_SAVE_SCRIPT: str = """
+-- KEYS[1] = post HASH key (e.g. blog:autosave:post:<uuid>)
+-- KEYS[2] = dirty SET key (blog:autosave:dirty)
+-- ARGV[1] = post-id (string, dirty set member)
+-- ARGV[2] = ttl_seconds (string)
+-- ARGV[3..9] = post_id, workspace_id, author_id, content_json,
+--              content_hash, word_count, updated_at
+local existing = redis.call('hget', KEYS[1], 'flushed_hash')
+if not existing then existing = '' end
+redis.call('hset', KEYS[1],
+  'post_id', ARGV[3],
+  'workspace_id', ARGV[4],
+  'author_id', ARGV[5],
+  'content_json', ARGV[6],
+  'content_hash', ARGV[7],
+  'flushed_hash', existing,
+  'word_count', ARGV[8],
+  'updated_at', ARGV[9])
+redis.call('expire', KEYS[1], ARGV[2])
+redis.call('sadd', KEYS[2], ARGV[1])
+return 1
+"""
+
+# Lua script: compare-and-set on content_hash — only mark the snapshot flushed
+# and remove from the dirty set when the in-Redis content_hash still matches
+# the value the caller is recording. If a concurrent autosave advanced
+# content_hash mid-flush, the script returns 0 and the post stays dirty for
+# the next sweeper tick.
+_MARK_FLUSHED_SCRIPT: str = """
+-- KEYS[1] = post HASH key
+-- KEYS[2] = dirty SET key
+-- ARGV[1] = post-id (dirty set member)
+-- ARGV[2] = expected/recorded content_hash (set as flushed_hash on success)
+local current = redis.call('hget', KEYS[1], 'content_hash')
+if not current or current ~= ARGV[2] then return 0 end
+redis.call('hset', KEYS[1], 'flushed_hash', ARGV[2])
+redis.call('srem', KEYS[2], ARGV[1])
+return 1
+"""
+
 
 @dataclass(frozen=True)
 class AutosaveSnapshot:
@@ -99,10 +144,15 @@ class AutosaveStore:
     ) -> bool:
         """Persist a new snapshot for ``post_id`` and mark it dirty.
 
-        The HASH is rewritten in full (HSET mapping) and the dirty set
-        gets the post id. ``flushed_hash`` is preserved if the key
-        already exists; on first write it is initialized to an empty
-        string so :attr:`AutosaveSnapshot.is_dirty` is True.
+        The HASH is rewritten in full and the dirty set gets the post id.
+        ``flushed_hash`` is preserved if the key already exists; on first
+        write it is initialized to an empty string so
+        :attr:`AutosaveSnapshot.is_dirty` is True.
+
+        The HGET-flushed-then-HSET-all sequence runs inside a single Lua
+        ``EVAL`` so a concurrent :meth:`mark_flushed` cannot interleave
+        and have its ``flushed_hash`` write clobbered by this save's
+        stale read.
 
         Returns:
             True on success, False when Redis is disabled or the
@@ -112,26 +162,21 @@ class AutosaveStore:
             return False
 
         timestamp = (now or datetime.datetime.now(datetime.UTC)).isoformat()
-        key = self._post_key(post_id)
-
-        # Read the existing flushed_hash so we don't overwrite it on a fresh
-        # save. If the key doesn't exist yet, default to "" so is_dirty is True.
-        existing_flushed_hash = await self._redis.hget(key, "flushed_hash")
-        flushed_hash = existing_flushed_hash if existing_flushed_hash is not None else ""
-
-        mapping: dict[str, Any] = {
-            "post_id": str(post_id),
-            "workspace_id": str(workspace_id),
-            "author_id": str(author_id),
-            "content_json": json.dumps(content_json, ensure_ascii=False, separators=(",", ":")),
-            "content_hash": content_hash,
-            "flushed_hash": flushed_hash,
-            "word_count": str(word_count),
-            "updated_at": timestamp,
-        }
-        await self._redis.hset(key, mapping=mapping)
-        await self._redis.expire(key, AUTOSAVE_TTL_SECONDS)
-        await self._redis.client.sadd(AUTOSAVE_DIRTY_SET, str(post_id))
+        await self._redis.client.eval(
+            _SAVE_SCRIPT,
+            2,
+            self._post_key(post_id),
+            AUTOSAVE_DIRTY_SET,
+            str(post_id),
+            str(AUTOSAVE_TTL_SECONDS),
+            str(post_id),
+            str(workspace_id),
+            str(author_id),
+            json.dumps(content_json, ensure_ascii=False, separators=(",", ":")),
+            content_hash,
+            str(word_count),
+            timestamp,
+        )
         return True
 
     async def get(self, post_id: uuid.UUID) -> AutosaveSnapshot | None:
@@ -143,18 +188,32 @@ class AutosaveStore:
             return None
         return _parse_snapshot(raw)
 
-    async def mark_flushed(self, post_id: uuid.UUID, *, content_hash: str) -> None:
+    async def mark_flushed(self, post_id: uuid.UUID, *, content_hash: str) -> bool:
         """Record that ``content_hash`` has been written to Postgres.
 
-        Sets ``flushed_hash`` and removes the post from the dirty set.
-        Subsequent autosaves with the same hash will be no-ops; with a
-        new hash they re-add to the dirty set via :meth:`save`.
+        Compare-and-set: only updates ``flushed_hash`` and removes the
+        post from the dirty set when the in-Redis ``content_hash`` still
+        matches the value being marked flushed. If a concurrent
+        :meth:`save` advanced the snapshot mid-flush, the CAS returns
+        False and the post stays in the dirty set for the next sweeper
+        tick (which will re-flush the new content). The whole sequence
+        runs in a single Lua ``EVAL`` so HGET and HSET are atomic.
+
+        Returns:
+            True when the snapshot was marked flushed, False when the
+            CAS rejected (newer save raced, or Redis is disabled).
         """
         if self._redis is None:
-            return
-        key = self._post_key(post_id)
-        await self._redis.hset(key, "flushed_hash", content_hash)
-        await self._redis.client.srem(AUTOSAVE_DIRTY_SET, str(post_id))
+            return False
+        result = await self._redis.client.eval(
+            _MARK_FLUSHED_SCRIPT,
+            2,
+            self._post_key(post_id),
+            AUTOSAVE_DIRTY_SET,
+            str(post_id),
+            content_hash,
+        )
+        return bool(result)
 
     async def discard(self, post_id: uuid.UUID) -> None:
         """Drop the snapshot entirely (used when the post is hard-deleted)."""
