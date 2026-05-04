@@ -67,11 +67,12 @@ class AuthContainer(containers.DeclarativeContainer):
     email_verification_service = providers.Factory(
         EmailVerificationService,
         user_service=user_service,
+        user_repository=user_repository,
         email_verification_repository=email_verification_repository,
         email_sender=email_sender,
         email_renderer=email_renderer,
     )
-    two_factor_service = providers.Factory(TwoFactorService)
+    two_factor_service = providers.Factory(TwoFactorService, user_repository=user_repository)
     oauth_service = providers.Factory(
         OAuthService,
         user_service=user_service,

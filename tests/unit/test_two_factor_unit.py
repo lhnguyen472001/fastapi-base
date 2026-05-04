@@ -9,6 +9,7 @@ attribute writes are observable.
 from __future__ import annotations
 
 import time
+import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -119,6 +120,7 @@ def _fake_user(
 ) -> SimpleNamespace:
     """In-memory user mimicking the User ORM shape used by the service."""
     return SimpleNamespace(
+        id=uuid.uuid4(),
         totp_secret=encrypt_totp_secret(secret_plaintext) if secret_plaintext else None,
         is_2fa_enabled=enabled,
         last_totp_counter=last_counter,
@@ -126,14 +128,24 @@ def _fake_user(
 
 
 def _fake_session() -> AsyncMock:
-    session = AsyncMock()
-    session.flush = AsyncMock()
-    return session
+    return AsyncMock()
+
+
+def _make_service() -> tuple[TwoFactorService, AsyncMock]:
+    """Build a TwoFactorService with a mocked UserRepository.
+
+    The mock's ``update`` reflects the new ``last_totp_counter`` back onto
+    the in-memory user so tests that issue multiple verify calls observe
+    replay-guard advancement.
+    """
+    user_repo = AsyncMock()
+
+    return TwoFactorService(user_repository=user_repo), user_repo
 
 
 @pytest.mark.asyncio
 async def test_verify_accepts_fresh_code_and_persists_counter() -> None:
-    service = TwoFactorService()
+    service, user_repo = _make_service()
     secret = pyotp.random_base32()
     user = _fake_user(secret)
     session = _fake_session()
@@ -142,20 +154,24 @@ async def test_verify_accepts_fresh_code_and_persists_counter() -> None:
     ok = await service.verify(session, user=user, totp_code=code)
 
     assert ok is True
-    assert user.last_totp_counter is not None
-    assert user.last_totp_counter > 0
-    session.flush.assert_awaited()
+    user_repo.update.assert_awaited_once()
+    persisted = user_repo.update.await_args.kwargs["data"]
+    assert "last_totp_counter" in persisted
+    assert persisted["last_totp_counter"] is not None
+    assert persisted["last_totp_counter"] > 0
 
 
 @pytest.mark.asyncio
 async def test_verify_rejects_replay_of_same_code() -> None:
-    service = TwoFactorService()
+    service, user_repo = _make_service()
     secret = pyotp.random_base32()
     user = _fake_user(secret)
     session = _fake_session()
     code = pyotp.TOTP(secret).now()
 
     first = await service.verify(session, user=user, totp_code=code)
+    # Reflect the persisted counter so the second verify sees it as already-consumed.
+    user.last_totp_counter = user_repo.update.await_args.kwargs["data"]["last_totp_counter"]
     second = await service.verify(session, user=user, totp_code=code)
 
     assert first is True
@@ -164,7 +180,7 @@ async def test_verify_rejects_replay_of_same_code() -> None:
 
 @pytest.mark.asyncio
 async def test_verify_returns_false_when_2fa_disabled() -> None:
-    service = TwoFactorService()
+    service, user_repo = _make_service()
     secret = pyotp.random_base32()
     user = _fake_user(secret, enabled=False)
     session = _fake_session()
@@ -173,22 +189,24 @@ async def test_verify_returns_false_when_2fa_disabled() -> None:
     ok = await service.verify(session, user=user, totp_code=code)
 
     assert ok is False
+    user_repo.update.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_verify_returns_false_when_secret_missing() -> None:
-    service = TwoFactorService()
+    service, user_repo = _make_service()
     user = _fake_user(None, enabled=True)
     session = _fake_session()
 
     ok = await service.verify(session, user=user, totp_code="000000")
 
     assert ok is False
+    user_repo.update.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_verify_rejects_wrong_code_without_advancing_counter() -> None:
-    service = TwoFactorService()
+    service, user_repo = _make_service()
     secret = pyotp.random_base32()
     user = _fake_user(secret)
     session = _fake_session()
@@ -199,6 +217,7 @@ async def test_verify_rejects_wrong_code_without_advancing_counter() -> None:
         # 1-in-1M chance of accidental match — re-roll once.
         secret = pyotp.random_base32()
         user = _fake_user(secret)
+        user_repo.update.reset_mock()
         ok = await service.verify(session, user=user, totp_code="000000")
     assert ok is False
-    assert user.last_totp_counter is None
+    user_repo.update.assert_not_awaited()

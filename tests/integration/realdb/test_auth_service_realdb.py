@@ -85,7 +85,8 @@ def auth_service(
     email_renderer: EmailRenderer,
     google_oauth_client: GoogleOAuthClient,
 ) -> AuthService:
-    user_service = UserService(repository=UserRepository())
+    user_repository = UserRepository()
+    user_service = UserService(repository=user_repository)
     refresh_token_repository = RefreshTokenRepository()
     email_verification_repository = EmailVerificationRepository()
 
@@ -95,11 +96,12 @@ def auth_service(
     )
     email_verification_service = EmailVerificationService(
         user_service=user_service,
+        user_repository=user_repository,
         email_verification_repository=email_verification_repository,
         email_sender=email_sender,
         email_renderer=email_renderer,
     )
-    two_factor_service = TwoFactorService()
+    two_factor_service = TwoFactorService(user_repository=user_repository)
     oauth_service = OAuthService(
         user_service=user_service,
         google_oauth_client=google_oauth_client,

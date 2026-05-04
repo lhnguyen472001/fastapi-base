@@ -78,8 +78,7 @@ class TokenService:
             user_agent=user_agent,
             ip_address=ip_address,
         )
-        session.add(refresh_row)
-        await session.flush()
+        refresh_row = await self.refresh_token_repository.add(session, refresh_row, expunge=False)
 
         pair = TokenPair(
             access_token=access_token,
@@ -115,7 +114,6 @@ class TokenService:
             previous = await self.refresh_token_repository.find_by_hash(session, token_hash=token_hash_value)
             if previous is not None:
                 await self.refresh_token_repository.revoke_all_for_user(session, user_id=previous.user_id)
-                await session.flush()
             raise RefreshTokenRevokedError()
 
         try:
@@ -129,9 +127,14 @@ class TokenService:
             session, user=user, user_agent=user_agent, ip_address=ip_address
         )
 
-        existing.revoked_at = datetime.datetime.now(datetime.UTC)
-        existing.replaced_by_id = new_refresh_row.id
-        await session.flush()
+        await self.refresh_token_repository.update(
+            session,
+            item_id=existing.id,
+            data={
+                "revoked_at": datetime.datetime.now(datetime.UTC),
+                "replaced_by_id": new_refresh_row.id,
+            },
+        )
 
         return new_pair
 
@@ -140,8 +143,11 @@ class TokenService:
         token_hash_value = hash_token(raw_refresh_token)
         existing = await self.refresh_token_repository.find_active_by_hash(session, token_hash=token_hash_value)
         if existing is not None:
-            existing.revoked_at = datetime.datetime.now(datetime.UTC)
-            await session.flush()
+            await self.refresh_token_repository.update(
+                session,
+                item_id=existing.id,
+                data={"revoked_at": datetime.datetime.now(datetime.UTC)},
+            )
 
     async def user_from_access_token(self, session: SessionType, *, token: str) -> User:
         """Decode an access token and return the corresponding active user.

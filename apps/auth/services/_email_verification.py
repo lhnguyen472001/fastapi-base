@@ -12,6 +12,7 @@ from apps.core.database.types import SessionType
 from apps.core.email import EmailMessage, EmailRenderer, EmailSenderProtocol
 from apps.settings import app_settings
 from apps.user.models import User
+from apps.user.repositories import UserRepository
 from apps.user.services import UserService
 
 
@@ -28,11 +29,13 @@ class EmailVerificationService:
         self,
         *,
         user_service: UserService,
+        user_repository: UserRepository,
         email_verification_repository: EmailVerificationRepository,
         email_sender: EmailSenderProtocol,
         email_renderer: EmailRenderer,
     ) -> None:
         self.user_service = user_service
+        self.user_repository = user_repository
         self.email_verification_repository = email_verification_repository
         self.email_sender = email_sender
         self.email_renderer = email_renderer
@@ -67,17 +70,26 @@ class EmailVerificationService:
             # If this attempt just hit the cap, mark the row used so a
             # later guess can't squeeze through on a stale find.
             if otp.attempts >= max_attempts:
-                otp.used_at = datetime.datetime.now(datetime.UTC)
-                await session.flush()
+                await self.email_verification_repository.update(
+                    session,
+                    item_id=otp.id,
+                    data={"used_at": datetime.datetime.now(datetime.UTC)},
+                )
             raise InvalidOtpError()
 
         # Success — mark code used + activate user.
         now = datetime.datetime.now(datetime.UTC)
-        otp.used_at = now
-        user.is_active = True
-        user.email_verified_at = now
-        await session.flush()
-        return user
+        await self.email_verification_repository.update(
+            session,
+            item_id=otp.id,
+            data={"used_at": now},
+        )
+        updated_user = await self.user_repository.update(
+            session,
+            item_id=user.id,
+            data={"is_active": True, "email_verified_at": now},
+        )
+        return updated_user if updated_user is not None else user
 
     async def resend(self, session: SessionType, *, email: str) -> None:
         """Issue a fresh OTP for an unverified user.
@@ -108,8 +120,7 @@ class EmailVerificationService:
             purpose=OTPPurpose.EMAIL_VERIFICATION.value,
             expires_at=expires_at,
         )
-        session.add(otp)
-        await session.flush()
+        await self.email_verification_repository.add(session, otp, expunge=False)
 
         subject = f"{app_settings.app_name} — verify your email"
         plain_body, html_body = self.email_renderer.render(

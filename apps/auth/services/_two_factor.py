@@ -19,6 +19,7 @@ from apps.auth.security import (
     verify_totp_with_replay_guard,
 )
 from apps.settings import app_settings
+from apps.user.repositories import UserRepository
 
 if TYPE_CHECKING:
     from apps.core.database.types import SessionType
@@ -29,10 +30,12 @@ class TwoFactorService:
     """TOTP setup / enable / disable / verify with at-rest encryption + replay guard.
 
     The service is session-scoped: callers pass an already-loaded user ORM
-    object and the service mutates its ``totp_secret`` (encrypted),
-    ``is_2fa_enabled``, and ``last_totp_counter`` fields, relying on
-    SQLAlchemy's session to flush.
+    object; the service routes field mutations through
+    :class:`UserRepository` so persistence stays inside the data layer.
     """
+
+    def __init__(self, *, user_repository: UserRepository) -> None:
+        self.user_repository = user_repository
 
     async def setup(self, session: SessionType, *, user: User) -> Setup2FAResponse:
         """Generate a new TOTP secret for the user (not yet enabled).
@@ -41,12 +44,17 @@ class TwoFactorService:
         code, but stored encrypted in the database.
         """
         secret = pyotp.random_base32()
-        user.totp_secret = encrypt_totp_secret(secret)
-        # Stay disabled until the user proves they can generate a code via enable.
-        user.is_2fa_enabled = False
-        # Reset the replay counter — a fresh secret has its own counter line.
-        user.last_totp_counter = None
-        await session.flush()
+        await self.user_repository.update(
+            session,
+            item_id=user.id,
+            data={
+                "totp_secret": encrypt_totp_secret(secret),
+                # Stay disabled until the user proves they can generate a code via enable.
+                "is_2fa_enabled": False,
+                # Reset the replay counter — a fresh secret has its own counter line.
+                "last_totp_counter": None,
+            },
+        )
 
         otpauth_url = pyotp.TOTP(secret).provisioning_uri(name=user.email, issuer_name=app_settings.auth.totp_issuer)
         return Setup2FAResponse(secret=secret, otpauth_url=otpauth_url)
@@ -57,8 +65,7 @@ class TwoFactorService:
             raise InvalidTwoFactorCodeError(message="2FA setup has not been started for this user.")
         if not await self._consume_code(session, user=user, code=totp_code):
             raise InvalidTwoFactorCodeError()
-        user.is_2fa_enabled = True
-        await session.flush()
+        await self.user_repository.update(session, item_id=user.id, data={"is_2fa_enabled": True})
 
     async def disable(
         self,
@@ -75,10 +82,11 @@ class TwoFactorService:
             raise InvalidCredentialsError()
         if not await self._consume_code(session, user=user, code=totp_code):
             raise InvalidTwoFactorCodeError()
-        user.is_2fa_enabled = False
-        user.totp_secret = None
-        user.last_totp_counter = None
-        await session.flush()
+        await self.user_repository.update(
+            session,
+            item_id=user.id,
+            data={"is_2fa_enabled": False, "totp_secret": None, "last_totp_counter": None},
+        )
 
     async def verify(self, session: SessionType, *, user: User, totp_code: str) -> bool:
         """Check a TOTP code, advance the replay counter, return success.
@@ -96,7 +104,7 @@ class TwoFactorService:
 
         Returns ``True`` only when the code is valid AND its 30-second time
         slice has not been consumed before. Successful consumption is
-        persisted by setting ``user.last_totp_counter`` and flushing.
+        persisted via :class:`UserRepository`.
         """
         plaintext = decrypt_totp_secret(user.totp_secret) if user.totp_secret else ""
         if not plaintext:
@@ -108,6 +116,5 @@ class TwoFactorService:
         )
         if matched is None:
             return False
-        user.last_totp_counter = matched
-        await session.flush()
+        await self.user_repository.update(session, item_id=user.id, data={"last_totp_counter": matched})
         return True
