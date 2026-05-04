@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine.url import URL
 
-__all__ = ["app_settings"]
+__all__ = ["StorageSettings", "app_settings"]
 
 
 class DatabaseSettings(BaseModel):
@@ -198,6 +198,54 @@ class RateLimitSettings(BaseModel):
     )
 
 
+class StorageSettings(BaseModel):
+    """Object-storage settings (LocalStack S3 in dev, real AWS S3 in prod).
+
+    Defaults point at the LocalStack container declared in ``compose.yml``
+    so dev-mode flows just work after ``docker compose up``.
+    """
+
+    s3_endpoint_url: str | None = Field(
+        default="http://localhost:4566",
+        description=(
+            "Custom S3 endpoint. Set to ``None`` to use the AWS default "
+            "(production); keep the LocalStack URL for local dev."
+        ),
+    )
+    s3_region: str = Field(default="us-east-1", description="AWS region.")
+    s3_bucket: str = Field(
+        default="fastapi-base-blog",
+        description="Default bucket for blog media.",
+    )
+    s3_access_key_id: SecretStr = Field(
+        default=SecretStr("test"),
+        description="Access key (LocalStack accepts any value; real AWS requires the IAM key).",
+    )
+    s3_secret_access_key: SecretStr = Field(
+        default=SecretStr("test"),
+        description="Secret key (LocalStack accepts any value).",
+    )
+
+    presign_expires_seconds: int = Field(
+        default=900,
+        ge=60,
+        le=3600,
+        description="Lifetime of presigned upload URLs (seconds).",
+    )
+    max_upload_bytes: int = Field(
+        default=10 * 1024 * 1024,
+        ge=1,
+        description="Server-enforced cap on direct-to-S3 uploads (bytes).",
+    )
+    use_path_style: bool = Field(
+        default=True,
+        description=(
+            "Path-style addressing for S3 URLs. Required for LocalStack "
+            "(``http://host:4566/<bucket>/<key>``). Disable for real AWS S3."
+        ),
+    )
+
+
 class EmailSettings(BaseModel):
     """Email sender settings (SMTP + Jinja templates)."""
 
@@ -249,6 +297,7 @@ class ApplicationSettings(BaseSettings):
     rbac: RBACSettings = Field(default_factory=RBACSettings, description="RBAC / Casbin settings")
     rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings, description="Rate-limit settings")
     redis: RedisSettings = Field(default_factory=RedisSettings, description="Redis settings")
+    storage: StorageSettings = Field(default_factory=StorageSettings, description="Object-storage (S3) settings")
 
     @model_validator(mode="after")
     def _enforce_production_safety(self) -> "ApplicationSettings":
