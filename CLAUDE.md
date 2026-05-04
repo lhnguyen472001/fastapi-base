@@ -117,6 +117,16 @@ class UserContainer(containers.DeclarativeContainer):
 - **RBAC / Casbin & multi-worker:** the Casbin enforcer is per-worker in-memory. Running with `uvicorn --workers >1` will cause stale-cache reads after policy mutations until each worker reloads. Stay on `--workers 1` until a Casbin watcher (e.g. Redis pub/sub) is wired in. See `apps/rbac/enforcer.py` warning.
 - **Imports:** Use `apps.*` prefix for all local imports (e.g., `from apps.core.database.engine import ...`)
 - **Sessions:** Use `Depends(session_factory)` in routes — auto read/write split via `RoutingSession`
+- **No session ops in services:** Services MUST NOT call `session.add` / `session.flush` / `session.refresh` / `session.delete` / `session.execute` / `session.merge` (or any other `session.*` method) directly. The only thing a service may do with the session is pass it as the first argument to a repository method. Persistence patterns map as follows:
+  - Insert new row: `await repo.add(session, instance, expunge=False)` (returns the persisted instance)
+  - Mutate-then-persist: build a `dict` of changed fields and call `await repo.update(session, item_id=instance.id, data={...})` — never `setattr(instance, ...) + session.flush()`
+  - Delete a loaded instance: `await repo.delete(session, item_id=instance.id)` — never `await session.delete(instance)`
+  - Bulk delete by predicate: `await repo.delete_where(session, Model.col == value)`
+  - Bulk insert: `await repo.add_many(session, [{...}, {...}])`
+  - Eager-load relationships after a write: re-fetch via `repo.find_by_id(...)` (or any read method on the repo); never call `session.refresh(instance, attribute_names=[...])` from a service
+  - If a service mutates fields on a loaded model from another aggregate, inject that aggregate's repository (e.g. `user_repository: UserRepository`) and call its `update(item_id, data=dict)`. Do not reach for the session as a shortcut.
+
+  Raw SQL / `session.execute(select(...))` and similar query construction belongs inside repository methods only — never in services.
 - **DI:** Use `@inject` + `Depends(Provide[Container.service])` — never manually instantiate services in routes
 - **Transactions:** Use `@Transactional()` decorator in services for multi-statement writes
 - **Filters:** Use `StatementFilter` subclasses for composable query filtering
