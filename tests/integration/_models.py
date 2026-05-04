@@ -5,8 +5,8 @@ from __future__ import annotations
 from sqlalchemy import String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from apps.core.database.model import HasSoftDeletedMixin
 from apps.core.database.model.base import UUIDAuditBase
+from apps.core.database.model.mixins import HasSoftDeletedMixin
 from apps.core.database.repository.base import BaseSQLAlchemyRepository
 
 

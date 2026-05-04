@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import Boolean, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
-from apps.core.database.model import HasSoftDeletedMixin
 from apps.core.database.model.base import BigIntAuditBase
+from apps.core.database.model.mixins import HasSoftDeletedMixin
 
 if TYPE_CHECKING:
     from apps.rbac.models._assignments import (

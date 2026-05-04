@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING
 from sqlalchemy import BigInteger, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from apps.core.database.model import HasSoftDeletedMixin
 from apps.core.database.model.base import UUIDAuditBase
+from apps.core.database.model.mixins import HasSoftDeletedMixin
 from apps.core.database.types import DateTimeUTC
 from apps.rbac.enums import ObjectAction
 from apps.rbac.registry import rbac_resource
@@ -18,7 +18,14 @@ if TYPE_CHECKING:
 
 @rbac_resource(
     "user",
-    actions=frozenset({ObjectAction.READ, ObjectAction.EDIT, ObjectAction.DELETE, ObjectAction.MANAGE}),
+    actions=frozenset(
+        {
+            ObjectAction.READ,
+            ObjectAction.EDIT,
+            ObjectAction.DELETE,
+            ObjectAction.MANAGE,
+        }
+    ),
 )
 class User(UUIDAuditBase, HasSoftDeletedMixin):
     """User model.

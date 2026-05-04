@@ -13,8 +13,8 @@ from sqlalchemy.sql.sqltypes import (
     Text,
 )
 
-from apps.core.database.model import HasSoftDeletedMixin
 from apps.core.database.model.base import UUIDAuditBase
+from apps.core.database.model.mixins import HasSoftDeletedMixin
 from apps.rbac.enums import ObjectAction
 from apps.rbac.registry import rbac_resource
 
