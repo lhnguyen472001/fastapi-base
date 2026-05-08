@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from apps.blog.enums import PostStatus
 from apps.blog.models import Category, Post, PostContent, PostTag, Tag
+from apps.blog.store import PostAutosaveState
 from apps.core.database.repository import BaseSQLAlchemyRepository
 from apps.core.database.types import SessionType
 
@@ -175,6 +176,34 @@ class PostRepository(BaseSQLAlchemyRepository[Post]):
         if load_content:
             stmt = stmt.options(selectinload(Post.content))
         return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def find_autosave_state(
+        self,
+        session: SessionType,
+        *,
+        workspace_id: uuid.UUID,
+        post_id: uuid.UUID,
+    ) -> PostAutosaveState | None:
+        """Return only ``(workspace_id, status, content_hash)`` for the post.
+
+        ``find_by_id`` would fire 3 SELECTs (Post + selectinload(category)
+        + selectinload(tags)) on every keystroke; this hot-path projection
+        is a single SELECT of three scalar columns.
+        """
+        stmt = select(Post.workspace_id, Post.status, Post.content_hash).where(
+            Post.id == post_id,
+            Post.workspace_id == workspace_id,
+            Post.deleted_at.is_(None),
+        )
+        row = (await session.execute(stmt)).one_or_none()
+        if row is None:
+            return None
+        workspace_id_val, status_val, content_hash_val = row
+        return PostAutosaveState(
+            workspace_id=workspace_id_val,
+            status=status_val,
+            content_hash=content_hash_val,
+        )
 
     async def find_by_slug(
         self,

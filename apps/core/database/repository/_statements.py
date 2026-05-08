@@ -66,13 +66,19 @@ def apply_execution_options(
 def apply_count_projection(statement: StatementTypeT, *, enable: bool = False) -> StatementTypeT:
     """Rewrite ``statement`` into a ``SELECT COUNT(1)`` form when enabled.
 
-    Strips any ``LIMIT`` / ``OFFSET`` so the count covers the whole result
-    set.
+    Strips ``LIMIT`` / ``OFFSET`` so the count covers the whole result set,
+    and clears ``ORDER BY`` because Postgres rejects ordering on an
+    aggregated column when no ``GROUP BY`` is present.
     """
     if not enable:
         return statement
 
-    return statement.with_only_columns(sql_func.count(text("1")), maintain_column_froms=True).limit(None).offset(None)
+    return (
+        statement.with_only_columns(sql_func.count(text("1")), maintain_column_froms=True)
+        .limit(None)
+        .offset(None)
+        .order_by(None)
+    )
 
 
 def normalize_filter_kwargs(

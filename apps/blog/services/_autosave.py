@@ -17,6 +17,7 @@ from apps.blog.exceptions import (
     PostAutosaveOnArchivedError,
     PostAutosaveUnavailableError,
     PostInvalidStatusTransitionError,
+    PostNotFoundError,
 )
 from apps.blog.models import Post, PostContent
 from apps.blog.repositories import PostContentRepository, PostRepository
@@ -67,12 +68,21 @@ class _PostAutosaveMixin:
         if not self.autosave_store.enabled:
             raise PostAutosaveUnavailableError()
 
-        post = await self.find_or_raise(session, workspace_id=workspace_id, post_id=post_id)
-        if post.status == PostStatus.ARCHIVED.value:
+        # Lean projection — autosave only needs (workspace_id, status,
+        # content_hash). Avoids the selectinload(category, tags) round-
+        # trips that find_or_raise / find_by_id pay for on every keystroke.
+        state = await self.repository.find_autosave_state(
+            session,
+            workspace_id=workspace_id,
+            post_id=post_id,
+        )
+        if state is None:
+            raise PostNotFoundError(message=f"Post '{post_id}' not found.")
+        if state.status == PostStatus.ARCHIVED.value:
             raise PostAutosaveOnArchivedError()
-        if post.status != PostStatus.DRAFT.value:
+        if state.status != PostStatus.DRAFT.value:
             raise PostInvalidStatusTransitionError(
-                message=f"Autosave is only allowed on draft posts; current status: '{post.status}'.",
+                message=f"Autosave is only allowed on draft posts; current status: '{state.status}'.",
             )
 
         text = extract_text(content_json)
@@ -81,7 +91,7 @@ class _PostAutosaveMixin:
         canonical = json.dumps(content_json, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
         content_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
-        if content_hash == post.content_hash:
+        if content_hash == state.content_hash:
             now = datetime.datetime.now(datetime.UTC)
             return content_hash, word_count, reading_minutes, now, True
 

@@ -124,15 +124,18 @@ class _ReadRepositoryMixin(Generic[SQLAlchemyModelT]):
         execution_options: ExecutableOptions | None = None,
         expunge: bool = True,
         uniquify: bool = True,
-        using_window_function: bool = True,
+        using_window_function: bool = False,
         eager_load: Sequence[InstrumentedAttribute[Any] | _AbstractLoad] | None = None,
         **kwargs: dict[str, Any],
     ) -> tuple[Sequence[SQLAlchemyModelT], int]:
         """List records and total count.
 
-        Defaults to a single-query ``COUNT(*) OVER ()`` strategy on Postgres.
-        Pass ``using_window_function=False`` to fall back to the two-query
-        implementation for dialects without window functions.
+        Defaults to the two-query strategy: a ``COUNT(*)`` first, then the
+        page SELECT only when the count is non-zero. ``COUNT(*) OVER ()``
+        is faster only for explicitly small / sparse result sets — under a
+        broad filter it forces Postgres to evaluate the entire filtered
+        set even when the page is just ``LIMIT 10``. Pass
+        ``using_window_function=True`` to opt in for those workloads.
         """
         if using_window_function:
             return await self._list_with_count_window_function(
@@ -170,6 +173,7 @@ class _ReadRepositoryMixin(Generic[SQLAlchemyModelT]):
     ) -> int:
         """Count records matching ``filters`` (and any ``filter_kwargs`` predicates)."""
         statement = self._build_query_statement(  # type: ignore[attr-defined]
+            *filters,
             statement=statement if statement is not None else self.statement,  # type: ignore[attr-defined]
             execution_options=execution_options,
             filter_kwargs=filter_kwargs,

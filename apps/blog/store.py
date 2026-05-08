@@ -96,7 +96,7 @@ return 1
 """
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class AutosaveSnapshot:
     """Immutable view of the autosave HASH read back from Redis."""
 
@@ -113,6 +113,23 @@ class AutosaveSnapshot:
     def is_dirty(self) -> bool:
         """True iff the in-Redis content has not been flushed to Postgres."""
         return self.content_hash != self.flushed_hash
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PostAutosaveState:
+    """Immutable lean projection of relational state used to gate autosave.
+
+    Distinct from :class:`AutosaveSnapshot` (the Redis HASH parse result):
+    this is the relational row state read from Postgres — workspace
+    ownership, current post status, and the last-flushed content hash —
+    without the eager-loaded ``category`` / ``tags`` that ``find_by_id``
+    pays for. At 1Hz keystroke pressure from N concurrent editors those
+    extra SELECTs are pure overhead.
+    """
+
+    workspace_id: uuid.UUID
+    status: str
+    content_hash: str | None
 
 
 class AutosaveStore:
