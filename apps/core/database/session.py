@@ -45,7 +45,32 @@ def reset_session_ctx() -> None:
 
 
 class RoutingSession(Session):
-    """Session that routes to the appropriate engine based on the type of query."""
+    """Session that routes statements between the reader and writer engines.
+
+    Routing rules, in order of precedence:
+
+    1. ``Update`` / ``Delete`` / ``Insert`` clauses always go to the writer.
+    2. ``SELECT ... FOR UPDATE`` goes to the writer (the replica cannot
+       hold a row lock that a later write would honour).
+    3. Once any of the above has fired in this session lifetime, every
+       subsequent statement also routes to the writer (sticky read-after-
+       write). The flag is reset by ``scoped_session.remove()`` between
+       requests because that destroys the session entirely.
+    4. Otherwise (pre-write SELECTs), route to the reader.
+
+    The previous implementation used ``self.in_transaction()`` plus the
+    private ``self._flushing`` attribute to decide writer vs reader. SA
+    autobegins a transaction on the first ``execute``, so under that
+    heuristic every SELECT after the first one routed to the writer —
+    silently wasting the read replica.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        # Set lazily on the first writer-bound statement; sticky for the
+        # remaining lifetime of this session so reads-after-write see the
+        # data they just committed instead of stale replica state.
+        self._wrote: bool = False
 
     def get_bind(
         self,
@@ -54,17 +79,11 @@ class RoutingSession(Session):
         clause: ClauseElement | None = None,
         **_kwargs: Any,
     ) -> Engine | Connection:
-        """Route writes, locking selects, and in-flight transactions to the writer.
-
-        SELECT ... FOR UPDATE statements MUST hit the writer because the read
-        replica cannot hold a row lock that the subsequent write would honour.
-        """
-        if (
-            self._flushing
-            or self.in_transaction()
-            or isinstance(clause, (Update, Delete, Insert))
-            or (isinstance(clause, Select) and clause._for_update_arg is not None)
-        ):
+        """Pick the engine for ``clause`` per the routing rules above."""
+        is_dml = isinstance(clause, (Update, Delete, Insert))
+        is_locking_select = isinstance(clause, Select) and clause._for_update_arg is not None
+        if is_dml or is_locking_select or self._wrote:
+            self._wrote = True
             return engine_factory(SQLAlchemyEngineTypes.WRITER).sync_engine
 
         return engine_factory(SQLAlchemyEngineTypes.READER).sync_engine

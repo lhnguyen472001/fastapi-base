@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Iterable
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, insert, select
 from sqlalchemy.orm import selectinload
 
 from apps.blog.enums import PostStatus
@@ -268,20 +268,30 @@ class PostTagRepository(BaseSQLAlchemyRepository[PostTag]):
         post_id: uuid.UUID,
         tag_ids: Iterable[uuid.UUID],
     ) -> None:
-        """Hard-replace the tag set on a post."""
-        existing = list(
-            (await session.execute(select(PostTag).where(PostTag.post_id == post_id))).scalars().all(),
-        )
+        """Hard-replace the tag set on a post.
+
+        Issues at most three statements regardless of tag count: a SELECT
+        of existing tag ids, one bulk DELETE for tags being dropped, and
+        one executemany INSERT for tags being added. The previous loop
+        produced one DELETE per dropped tag plus one INSERT per added tag,
+        which under bulk re-tagging compounded into N+1 round-trips.
+        """
         target = set(tag_ids)
-        keep = {row.tag_id for row in existing if row.tag_id in target}
 
-        # Delete rows not in the target set.
-        for row in existing:
-            if row.tag_id not in target:
-                await session.delete(row)
+        existing_rows = (
+            (await session.execute(select(PostTag.tag_id).where(PostTag.post_id == post_id))).scalars().all()
+        )
+        existing = set(existing_rows)
 
-        # Insert rows in the target set that aren't already present.
-        for tag_id in target - keep:
-            session.add(PostTag(post_id=post_id, tag_id=tag_id))
+        to_remove = existing - target
+        if to_remove:
+            await session.execute(
+                delete(PostTag).where(PostTag.post_id == post_id, PostTag.tag_id.in_(to_remove)),
+            )
 
-        await session.flush()
+        to_add = target - existing
+        if to_add:
+            await session.execute(
+                insert(PostTag),
+                [{"post_id": post_id, "tag_id": tag_id} for tag_id in to_add],
+            )
