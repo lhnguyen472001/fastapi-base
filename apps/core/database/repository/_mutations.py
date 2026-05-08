@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.sql import delete
 
 from apps.core.database.types import MISSING
@@ -92,10 +93,31 @@ async def get_or_upsert(
 ) -> tuple[SQLAlchemyModelT, bool]:
     """Find-or-create. Returns ``(instance, was_created)``.
 
-    Locks via SELECT FOR UPDATE before checking existence so concurrent
-    callers cannot both insert.
+    On Postgres (without ``upsert=True``) this issues a single
+    ``INSERT ... ON CONFLICT DO NOTHING`` followed by a confirmation
+    ``SELECT``, so two concurrent callers can never both insert. The
+    earlier ``SELECT FOR UPDATE`` path was unsafe because predicate
+    locking does not gap-lock empty rows on Postgres.
+
+    On other dialects, or when ``upsert=True``, the legacy
+    ``SELECT FOR UPDATE → INSERT`` path is used; that path remains
+    race-prone outside Postgres but Postgres is the supported production
+    driver per :mod:`apps.settings`.
     """
     match_filter = repo._build_match_filter(match_fields, kwargs)
+    dialect = repo._get_dialect(session)
+
+    if not upsert and dialect.name == "postgresql" and match_filter:
+        return await _pg_find_or_create(
+            repo,
+            session,
+            *filters,
+            match_filter=match_filter,
+            insert_values=kwargs,
+            execution_options=execution_options,
+            uniquify=uniquify,
+            expunge=expunge,
+        )
 
     locked_statement = repo.statement.with_for_update()
 
@@ -128,6 +150,46 @@ async def get_or_upsert(
         session.expunge(existing_instance)
 
     return existing_instance, False
+
+
+async def _pg_find_or_create(
+    repo: BaseSQLAlchemyRepository[SQLAlchemyModelT],
+    session: SessionType,
+    *filters: StatementFilter | ColumnElement[bool],
+    match_filter: dict[str, Any],
+    insert_values: dict[str, Any],
+    execution_options: ExecutableOptions | None,
+    uniquify: bool,
+    expunge: bool,
+) -> tuple[SQLAlchemyModelT, bool]:
+    """Postgres-specific INSERT ... ON CONFLICT DO NOTHING + SELECT.
+
+    The conflict target is ``match_filter.keys()``; the caller is
+    responsible for ensuring those columns form a unique constraint or
+    primary key (a precondition for any find-or-create operation).
+    """
+    conflict_columns = list(match_filter.keys())
+    insert_stmt = (
+        pg_insert(repo.model_type).values(**insert_values).on_conflict_do_nothing(index_elements=conflict_columns)
+    )
+    result = await session.execute(insert_stmt)
+    created = (result.rowcount or 0) > 0
+
+    instance = await repo.get_one(
+        session,
+        *filters,
+        **match_filter,
+        execution_options=execution_options,
+        uniquify=uniquify,
+        expunge=expunge,
+    )
+    if instance is None:
+        msg = (
+            "get_or_upsert: INSERT ... ON CONFLICT executed but no row matches "
+            f"{match_filter}; check that match_fields targets a unique constraint."
+        )
+        raise RuntimeError(msg)
+    return instance, created
 
 
 async def delete_where(

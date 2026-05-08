@@ -9,7 +9,7 @@ import pytest_asyncio
 
 from apps.rbac.decorators import require_access, require_ownership
 from apps.rbac.enforcer import enforcer_factory
-from apps.rbac.exceptions import AccessDeniedError
+from apps.rbac.exceptions import AccessDeniedError, RBACPolicySyncError
 from apps.rbac.repositories import (
     GroupRepository,
     GroupRoleRepository,
@@ -448,3 +448,84 @@ async def test_require_ownership_allows_via_instance_grant(
         doc_id=obj_id,
     )
     assert result == "ok"
+
+
+# ----- C1: Casbin sync failure compensation ---------------------------------
+
+
+async def test_grant_permission_compensates_when_casbin_add_policy_fails(real_session, rbac_service, enforcer) -> None:
+    """C1 — Casbin write failure must roll back the relational link."""
+    s = _short()
+    role = await rbac_service.create_role(real_session, name=f"comp_role_{s}", display_name="Comp")
+    perm = await rbac_service.create_permission(
+        real_session,
+        name=f"comp_perm_{s}",
+        display_name="Comp",
+        resource=f"comp_{s}",
+        action="read",
+    )
+
+    original_add_policy = enforcer.add_policy
+
+    async def boom(*_args, **_kwargs) -> bool:
+        msg = "simulated Casbin outage"
+        raise RuntimeError(msg)
+
+    enforcer.add_policy = boom
+    try:
+        with pytest.raises(RBACPolicySyncError):
+            await rbac_service.grant_permission_to_role(
+                real_session,
+                role_id=role.id,
+                permission_id=perm.id,
+            )
+    finally:
+        enforcer.add_policy = original_add_policy
+
+    # Compensation MUST have deleted the link row that the failed grant briefly
+    # committed. Re-granting now (with Casbin healthy) MUST succeed.
+    await rbac_service.grant_permission_to_role(
+        real_session,
+        role_id=role.id,
+        permission_id=perm.id,
+    )
+    policies = enforcer.get_policy()
+    assert any(p == [f"role:{role.id}", f"comp_{s}", "read"] for p in policies)
+
+
+async def test_grant_object_permission_compensates_when_casbin_add_policy_fails(
+    real_session, rbac_service, enforcer, seeded_user
+) -> None:
+    """C1 — object-permission grant must roll back when Casbin sync fails."""
+    s = _short()
+    obj_id = str(uuid.uuid4())
+
+    original_add_policy = enforcer.add_policy
+
+    async def boom(*_args, **_kwargs) -> bool:
+        msg = "simulated Casbin outage"
+        raise RuntimeError(msg)
+
+    enforcer.add_policy = boom
+    try:
+        with pytest.raises(RBACPolicySyncError):
+            await rbac_service.grant_object_permission(
+                real_session,
+                user_id=seeded_user.id,
+                resource=f"obj_comp_{s}",
+                object_id=obj_id,
+                action="edit",
+            )
+    finally:
+        enforcer.add_policy = original_add_policy
+
+    # Compensation deleted the relational row. Re-granting now MUST succeed.
+    await rbac_service.grant_object_permission(
+        real_session,
+        user_id=seeded_user.id,
+        resource=f"obj_comp_{s}",
+        object_id=obj_id,
+        action="edit",
+    )
+    policies = enforcer.get_policy()
+    assert any(p == [f"user:{seeded_user.id}", f"obj_comp_{s}:{obj_id}", "edit"] for p in policies)

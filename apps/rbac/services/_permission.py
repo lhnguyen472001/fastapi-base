@@ -14,6 +14,7 @@ from apps.core.services.base import SQLAlchemyService
 from apps.rbac.exceptions import (
     PermissionNotFoundError,
     RBACConflictError,
+    RBACPolicySyncError,
     RoleNotFoundError,
 )
 from apps.rbac.models import Permission, RolePermission
@@ -28,9 +29,11 @@ from apps.rbac.services._helpers import role_sub
 class PermissionService(SQLAlchemyService[Permission]):
     """Manage permissions and role↔permission grants.
 
-    Owns the ``Permission`` aggregate plus the role-permission bridge so a
-    single transaction inserts the bridge row and the matching Casbin
-    policy. Direct user↔role assignments live in :class:`RoleService`.
+    Owns the ``Permission`` aggregate plus the role-permission bridge.
+    Mutations follow the *commit-then-policy-sync* pattern: the relational
+    write commits first, then Casbin is updated. On Casbin failure the
+    relational row is compensated in a fresh transaction. See
+    :mod:`apps.rbac.services` module docstring for the full rationale.
     """
 
     def __init__(
@@ -75,7 +78,6 @@ class PermissionService(SQLAlchemyService[Permission]):
         logger.info("PermissionService - create_permission - Created permission {} ({})", perm.id, name)
         return perm
 
-    @transactional
     async def grant_permission_to_role(
         self,
         session: AsyncSession,
@@ -84,6 +86,45 @@ class PermissionService(SQLAlchemyService[Permission]):
         permission_id: int,
         granted_by: uuid.UUID | None = None,
     ) -> RolePermission:
+        link, perm = await self._db_grant_permission_to_role(
+            session,
+            role_id=role_id,
+            permission_id=permission_id,
+            granted_by=granted_by,
+        )
+
+        try:
+            await self.enforcer.add_policy(role_sub(role_id), perm.resource, perm.action)
+        except Exception as sync_exc:
+            await self._compensate_role_permission_drift(
+                session,
+                link_id=link.id,
+                operation="grant_permission_to_role",
+                sync_exc=sync_exc,
+            )
+
+        logger.info(
+            "PermissionService - grant_permission_to_role - role={} perm={}",
+            role_id,
+            permission_id,
+        )
+        return link
+
+    @transactional
+    async def _db_grant_permission_to_role(
+        self,
+        session: AsyncSession,
+        *,
+        role_id: int,
+        permission_id: int,
+        granted_by: uuid.UUID | None,
+    ) -> tuple[RolePermission, Permission]:
+        """Commit the relational role↔permission link; return (link, perm).
+
+        Permissions are looked up here (not in the public method) so the
+        ``perm.resource`` / ``perm.action`` values used for the Casbin
+        policy come from the same transaction that wrote the link row.
+        """
         role = await self.role_repository.get_one_by_id(session, item_id=role_id)
         if role is None:
             raise RoleNotFoundError(message=f"Role {role_id} not found.")
@@ -106,10 +147,46 @@ class PermissionService(SQLAlchemyService[Permission]):
         except IntegrityError as exc:
             raise RBACConflictError(message="Permission already granted to role.") from exc
 
-        await self.enforcer.add_policy(role_sub(role_id), perm.resource, perm.action)
-        logger.info(
-            "PermissionService - grant_permission_to_role - role={} perm={}",
-            role_id,
-            permission_id,
+        return link, perm
+
+    async def _compensate_role_permission_drift(
+        self,
+        session: AsyncSession,
+        *,
+        link_id: int,
+        operation: str,
+        sync_exc: BaseException,
+    ) -> None:
+        """Best-effort compensation for a committed link whose Casbin sync failed.
+
+        Always raises :class:`RBACPolicySyncError`. The message records
+        whether the compensation succeeded so DRIFT can be alerted on.
+        """
+        logger.error(
+            "PermissionService - {} - Casbin sync failed; compensating link={}: {!r}",
+            operation,
+            link_id,
+            sync_exc,
         )
-        return link
+        drift = False
+        try:
+            await self._delete_role_permission(session, link_id=link_id)
+        except Exception as comp_exc:
+            drift = True
+            logger.error(
+                "PermissionService - {} - DRIFT: compensation failed link={}: {!r}",
+                operation,
+                link_id,
+                comp_exc,
+            )
+
+        msg = (
+            f"DRIFT: relational link {link_id} committed but Casbin sync and compensation both failed: {sync_exc}"
+            if drift
+            else f"Casbin sync failed (relational link {link_id} compensated): {sync_exc}"
+        )
+        raise RBACPolicySyncError(message=msg) from sync_exc
+
+    @transactional
+    async def _delete_role_permission(self, session: AsyncSession, *, link_id: int) -> None:
+        await self.role_permission_repository.delete(session, item_id=link_id)

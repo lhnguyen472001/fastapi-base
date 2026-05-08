@@ -246,6 +246,33 @@ class StorageSettings(BaseModel):
     )
 
 
+class ObservabilitySettings(BaseModel):
+    """OpenTelemetry tracing settings.
+
+    The module is a no-op when ``enabled=False`` so dev / test runs do
+    not require an OTel collector. Flip on to install the tracer provider
+    and instrument FastAPI / SQLAlchemy / Redis. ``otlp_endpoint`` may be
+    omitted even when enabled — the provider is still installed (logs
+    carry ``trace_id`` / ``span_id``) but no exporter is attached.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description="Master switch — install tracer provider + instrumentors when true.",
+    )
+    service_name: str = Field(
+        default="fastapi-base",
+        description="``service.name`` resource attribute attached to every span.",
+    )
+    otlp_endpoint: str | None = Field(
+        default=None,
+        description=(
+            "OTLP/gRPC endpoint for the BatchSpanProcessor. "
+            "Example: http://otel-collector:4317 — leave empty to skip exporting."
+        ),
+    )
+
+
 class EmailSettings(BaseModel):
     """Email sender settings (SMTP + Jinja templates)."""
 
@@ -298,6 +325,10 @@ class ApplicationSettings(BaseSettings):
     rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings, description="Rate-limit settings")
     redis: RedisSettings = Field(default_factory=RedisSettings, description="Redis settings")
     storage: StorageSettings = Field(default_factory=StorageSettings, description="Object-storage (S3) settings")
+    observability: ObservabilitySettings = Field(
+        default_factory=ObservabilitySettings,
+        description="OpenTelemetry tracing settings",
+    )
 
     @model_validator(mode="after")
     def _enforce_production_safety(self) -> "ApplicationSettings":

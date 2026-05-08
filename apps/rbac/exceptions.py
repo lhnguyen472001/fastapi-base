@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import enum
 
-from apps.core.exceptions.errors import ConflictError, ForbiddenError, NotFoundError
+from apps.core.exceptions.errors import ConflictError, ForbiddenError, InternalServerError, NotFoundError
 
 
 class RBACErrorCodes(enum.StrEnum):
@@ -15,6 +15,7 @@ class RBACErrorCodes(enum.StrEnum):
     RBAC003 = "RBAC003"  # Permission not found
     RBAC004 = "RBAC004"  # Duplicate
     RBAC005 = "RBAC005"  # Access denied
+    RBAC006 = "RBAC006"  # Policy sync failure (DB committed but Casbin write failed)
 
 
 class GroupNotFoundError(NotFoundError):
@@ -49,4 +50,20 @@ class AccessDeniedError(ForbiddenError):
     code: str = RBACErrorCodes.RBAC005
 
     def __init__(self, *, message: str = "Access denied.") -> None:
+        super().__init__(code=self.code, message=message)
+
+
+class RBACPolicySyncError(InternalServerError):
+    """Raised when Casbin policy sync fails after the relational write committed.
+
+    The relational write is durable; the request fails so the caller knows
+    not to assume the policy is in effect. When compensation succeeded the
+    relational and policy stores remain consistent. When compensation
+    *also* failed the system is in a drifted state — the message records
+    that explicitly so log scrapers can flag it.
+    """
+
+    code: str = RBACErrorCodes.RBAC006
+
+    def __init__(self, *, message: str = "RBAC policy sync failed.") -> None:
         super().__init__(code=self.code, message=message)

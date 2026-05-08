@@ -24,29 +24,35 @@ Casbin mapping (no domains):
   user inherits via group membership, so a single ``enforce`` call
   resolves the full graph.
 
-Transaction boundary note
--------------------------
+Transaction boundary note (commit-then-policy-sync)
+---------------------------------------------------
 
-Every mutating method calls ``self.enforcer.add_policy`` /
-``add_grouping_policy`` / ``remove_policy`` **inside** its
-``@transactional`` block. The Casbin SQLAlchemy adapter persists each
-rule itself, so we do not call ``enforcer.save_policy()`` (that would
-rewrite the entire ``casbin_rule`` table on every grant). Keeping the
-single-rule writes inside the transaction means the relational rows and
-the ``casbin_rule`` table commit as one atomic unit — if Casbin writes
-fail, the whole assignment rolls back and the two stores cannot drift.
+Casbin's :class:`casbin_async_sqlalchemy_adapter.Adapter` opens its **own**
+``AsyncSession`` against the configured database URL. Every
+``add_policy`` / ``add_grouping_policy`` / ``remove_policy`` call commits
+on that adapter session independently of the FastAPI request session, so
+co-locating the call inside ``@transactional`` does **not** make the two
+writes atomic — it only happens to look that way under happy-path tests.
 
-The tradeoff is lock contention: the Casbin adapter writes hold a row-
-lock on ``casbin_rule`` for the duration of the DB transaction. Under
-bulk grants (e.g. :meth:`GroupService.add_user_to_group` or
-:meth:`GroupService.assign_role_to_group` with many inherited roles)
-this can serialize concurrent writers.
+This module therefore uses *commit-then-policy-sync*:
 
-When we outgrow single-writer throughput, move the enforcer sync **after**
-commit and add a compensating retry queue (e.g. Redis or an outbox table)
-so failed syncs can be replayed without leaving the relational store ahead
-of Casbin. Do NOT bypass the transaction without such a compensation
-mechanism — stale authz is a security footgun.
+1. The relational write (e.g. ``RolePermission`` insert, ``UserGroup``
+   insert) commits in a small ``@transactional`` block.
+2. After commit, the Casbin policy/grouping write runs *outside* any
+   transaction.
+3. If the Casbin write fails, the relational row is compensated (best-
+   effort delete in a fresh transaction) and the public method raises
+   :class:`apps.rbac.exceptions.RBACPolicySyncError` so the caller
+   does **not** assume the policy is in effect.
+
+This is not a true outbox: a process crash between step 1 and step 2
+leaves the relational store ahead of Casbin (under-grant). Compensation
+itself can also fail, leaving drift in the same direction. Both
+conditions are logged at ``error`` level with a ``DRIFT:`` prefix so
+they can be alerted on. A full transactional outbox + watcher remains
+the recommended next step before bulk-grant volume grows; until then,
+this layout closes the silent-privilege-escalation hole identified by
+the 2026-05-08 audit (C1).
 """
 
 from __future__ import annotations

@@ -24,6 +24,7 @@ from apps.blog.containers import BlogContainer
 from apps.blog.routes.admin import blog_admin_router
 from apps.blog.routes.public import blog_public_router
 from apps.blog.sweeper import start_sweeper_task, stop_sweeper_task
+from apps.core.database.engine import SQLAlchemyEngineTypes, engine_factory
 from apps.core.database.session import async_session_factory
 from apps.core.exceptions.base import BackendError
 from apps.core.exceptions.handlers import (
@@ -31,6 +32,8 @@ from apps.core.exceptions.handlers import (
     unhandled_exception_handler,
     validation_exception_handler,
 )
+from apps.core.logging import configure_logging
+from apps.core.observability import configure_observability
 from apps.core.rate_limit import limiter, rate_limit_exceeded_handler
 from apps.core.redis import close_redis_client
 from apps.health.routes import health_router
@@ -98,6 +101,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 def application_factory() -> FastAPI:
     """Build and return a configured FastAPI application."""
+    configure_logging()
+
     app = FastAPI(
         title=app_settings.app_name,
         version="0.1.0",
@@ -110,6 +115,14 @@ def application_factory() -> FastAPI:
     container = AppContainer()
     container.init_resources()
     container.wire(modules=[__name__])
+
+    # Observability — TracerProvider + FastAPI / SQLAlchemy / Redis instrumentors.
+    # No-op when OBSERVABILITY_ENABLED=false (the default for dev / tests).
+    configure_observability(
+        app,
+        writer_engine=engine_factory(SQLAlchemyEngineTypes.WRITER),
+        reader_engine=engine_factory(SQLAlchemyEngineTypes.READER),
+    )
 
     # Rate limiting ---------------------------------------------------------
     app.state.limiter = limiter
