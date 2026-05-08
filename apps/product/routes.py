@@ -76,7 +76,10 @@ async def get_product_by_slug(
 
 
 # ---------------------------------------------------------------------------
-# Protected product endpoints (require_access)
+# Protected product endpoints — guarded by ``Depends(access_required(...))``.
+# (Note: the ``@require_access`` decorator in ``apps.rbac.decorators`` is an
+# alternative for routes that prefer a decorator over the FastAPI Depends
+# mechanism; both are wired to ``AccessService.check`` under the hood.)
 # ---------------------------------------------------------------------------
 
 
