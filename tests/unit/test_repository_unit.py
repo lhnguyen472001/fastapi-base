@@ -212,26 +212,39 @@ async def test_list_and_count_short_circuits_on_zero() -> None:
 
 
 async def test_update_returns_none_when_missing() -> None:
+    """``update(dict)`` fast-path: a single ``UPDATE ... RETURNING`` that
+    yields no rows must return ``None``."""
     repo = _ItemRepository()
-    session = _make_session(scalar_one_or_none=None)
+    session = _make_session()
+    empty_scalars = MagicMock()
+    empty_scalars.one_or_none.return_value = None
+    session.scalars = AsyncMock(return_value=empty_scalars)
 
     result = await repo.update(session, item_id=uuid.uuid4(), data={"name": "z"})
 
     assert result is None
+    session.scalars.assert_awaited_once()
+    # No load-mutate-merge round-trips should have fired on the fast path.
+    session.merge.assert_not_awaited()
+    session.flush.assert_not_awaited()
 
 
 async def test_update_applies_dict_fields() -> None:
+    """``update(dict)`` fast-path: returns the row from ``UPDATE ... RETURNING``
+    in a single statement (no SELECT, no merge, no flush)."""
     existing = _Item(name="old", value=1)
     repo = _ItemRepository()
-    session = _make_session(scalar_one_or_none=existing)
+    session = _make_session()
+    populated = MagicMock()
+    populated.one_or_none.return_value = existing
+    session.scalars = AsyncMock(return_value=populated)
 
     result = await repo.update(session, item_id=uuid.uuid4(), data={"name": "new", "value": 99})
 
     assert result is existing
-    assert existing.name == "new"
-    assert existing.value == 99
-    session.merge.assert_awaited_once()
-    session.flush.assert_awaited_once()
+    session.scalars.assert_awaited_once()
+    session.merge.assert_not_awaited()
+    session.flush.assert_not_awaited()
 
 
 # -------------------------------- delete ------------------------------------

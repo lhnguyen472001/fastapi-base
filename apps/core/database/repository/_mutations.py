@@ -66,11 +66,15 @@ async def get_and_update(
 
     if updated:
         existing_instance = await repo._attach_to_session(session, existing_instance, strategy="merge", load=True)
-        await session.refresh(
-            existing_instance,
-            attribute_names=attribute_names,
-            with_for_update=with_for_update,
-        )
+        # ``merge(load=True)`` already round-trips and returns a refreshed
+        # copy; ``session.refresh`` is only needed when the caller asked
+        # for a specific subset of attributes or a row-level lock.
+        if attribute_names is not None or with_for_update is not None:
+            await session.refresh(
+                existing_instance,
+                attribute_names=attribute_names,
+                with_for_update=with_for_update,
+            )
 
     if expunge:
         session.expunge(existing_instance)
@@ -140,11 +144,13 @@ async def get_or_upsert(
                 setattr(existing_instance, field_name, new_field_value)
 
         existing_instance = await repo._attach_to_session(session, existing_instance, strategy="merge", load=True)
-        await session.refresh(
-            existing_instance,
-            attribute_names=attribute_names,
-            with_for_update=with_for_update,
-        )
+        # See ``get_and_update``: redundant when both options are unset.
+        if attribute_names is not None or with_for_update is not None:
+            await session.refresh(
+                existing_instance,
+                attribute_names=attribute_names,
+                with_for_update=with_for_update,
+            )
 
     if expunge:
         session.expunge(existing_instance)

@@ -15,7 +15,7 @@ from collections.abc import Iterable, Sequence
 from typing import Any, Generic, cast
 
 from sqlalchemy.orm import InstrumentedAttribute
-from sqlalchemy.sql import ColumnElement
+from sqlalchemy.sql import ColumnElement, update
 from sqlalchemy.sql.selectable import ForUpdateParameter
 
 from apps.core.database.filters import StatementFilter
@@ -37,7 +37,18 @@ class _WriteRepositoryMixin(Generic[SQLAlchemyModelT]):
         *,
         expunge: bool = True,
     ) -> SQLAlchemyModelT:
-        """Add a model instance to the database."""
+        """Add a model instance to the database.
+
+        Always flushes so server-defaulted columns (``id``, ``created_at``)
+        are populated before the call returns. The audit's H2 suggestion
+        to skip the flush when ``expunge=False`` is unsafe in this
+        codebase: many service flows do ``repo.add(parent)`` then
+        ``repo.add(child(parent.id))`` and expect the parent's
+        server-generated ``id`` to be available immediately. Removing the
+        flush would require refactoring every such call site to use ORM
+        relationships (which trigger SA unit-of-work dependency-ordered
+        inserts) before the optimisation is safe.
+        """
         model = self.model_type(**data) if isinstance(data, dict) else data  # type: ignore[attr-defined]
         await self._attach_to_session(session, model, strategy="insert", load=False)  # type: ignore[attr-defined]
 
@@ -78,11 +89,25 @@ class _WriteRepositoryMixin(Generic[SQLAlchemyModelT]):
     ) -> SQLAlchemyModelT | None:
         """Update a record by id.
 
-        ``data`` may be a partial-update ``dict`` (only the listed keys are
-        copied) or a full model instance (every mapped column is copied —
-        full-replace semantics). Returns the updated model, or ``None`` when
-        the row does not exist.
+        ``data`` may be a partial-update ``dict`` (fast-path: a single
+        ``UPDATE ... RETURNING`` round-trip) or a full model instance
+        (slow path: load → mutate → merge for full-replace semantics).
+        Returns the updated model, or ``None`` when the row does not exist
+        (or is soft-deleted).
+
+        ``attribute_names`` and ``with_for_update`` are honoured only on
+        the slow path; on the fast path they are ignored because the
+        single statement obviates the second SELECT they used to drive.
         """
+        if isinstance(data, dict):
+            return await self._fast_update_by_id(
+                session,
+                item_id=item_id,
+                update_dict=data,
+                execution_options=execution_options,
+                expunge=expunge,
+            )
+
         update_dict = self._coerce_update_payload(data)
 
         existing_instance = await self.get_one_by_id(  # type: ignore[attr-defined]
@@ -109,6 +134,53 @@ class _WriteRepositoryMixin(Generic[SQLAlchemyModelT]):
             session.expunge(existing_instance)
 
         return existing_instance
+
+    async def _fast_update_by_id(
+        self,
+        session: SessionType,
+        *,
+        item_id: Any,
+        update_dict: dict[str, Any],
+        execution_options: ExecutableOptions | None,
+        expunge: bool | None,
+    ) -> SQLAlchemyModelT | None:
+        """Single-statement ``UPDATE ... RETURNING`` for dict-shaped updates.
+
+        Replaces the legacy load-mutate-merge path (2-3 round-trips) with
+        one round-trip. Soft-deleted rows are excluded via the same
+        ``HasSoftDeletedMixin`` filter that ``get_one_by_id`` honours, so
+        callers see identical "row not found" behaviour for tombstoned
+        rows.
+        """
+        id_attribute = self.id_attribute  # type: ignore[attr-defined]
+        if isinstance(id_attribute, InstrumentedAttribute):
+            id_col = id_attribute
+        else:
+            id_col = getattr(self.model_type, id_attribute)  # type: ignore[attr-defined]
+
+        statement = (
+            update(self.model_type)  # type: ignore[attr-defined]
+            .where(id_col == item_id)
+            .values(**update_dict)
+            .returning(self.model_type)  # type: ignore[attr-defined]
+        )
+
+        soft_delete_filter = self._get_soft_delete_filter()  # type: ignore[attr-defined]
+        if soft_delete_filter is not None:
+            statement = statement.where(soft_delete_filter)
+
+        if execution_options:
+            statement = statement.execution_options(**execution_options)
+
+        result = await session.scalars(statement, execution_options={"synchronize_session": "fetch"})
+        instance = result.one_or_none()
+        if instance is None:
+            return None
+
+        if expunge:
+            session.expunge(instance)
+
+        return instance
 
     def _coerce_update_payload(
         self,
