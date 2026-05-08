@@ -189,7 +189,7 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
         slug: str,
     ) -> PostDetailResponse:
         """Read-through cache for the public detail response."""
-        cache_key = self._cache_key_detail(workspace_id, slug)
+        cache_key = await self._cache_key_detail(workspace_id, slug)
         cached = await self.cache.get(cache_key)
         if cached is not None:
             return PostDetailResponse.model_validate(cached)
@@ -530,22 +530,33 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
         return reloaded
 
     # ------------------------------------------------------------------
-    # cache helpers
+    # cache helpers (versioned-prefix invalidation)
     # ------------------------------------------------------------------
+    #
+    # Cached entries embed a per-workspace generation counter: every
+    # invalidation is a single ``INCR`` on that counter, which orphans
+    # every previously-cached key under the old prefix and lets them
+    # expire via their existing TTL. Reads pay one extra ``GET`` to
+    # resolve the current generation; writes drop from O(workspace
+    # cache size) ``SCAN`` + batched DELETE to O(1) ``INCR``.
 
     @staticmethod
-    def _cache_key_detail(workspace_id: uuid.UUID, slug: str) -> str:
-        """Key for a single published-post detail response."""
-        return f"{POST_CACHE_KEY_PREFIX}:ws:{workspace_id}:slug:{slug}"
+    def _cache_key_workspace_gen(workspace_id: uuid.UUID) -> str:
+        """Counter key whose value is the current cache generation."""
+        return f"{POST_CACHE_KEY_PREFIX}:ws:{workspace_id}:gen"
 
-    @staticmethod
-    def _cache_key_workspace_pattern(workspace_id: uuid.UUID) -> str:
-        """SCAN pattern that matches every cached entry for one workspace."""
-        return f"{POST_CACHE_KEY_PREFIX}:ws:{workspace_id}:*"
+    async def _workspace_cache_gen(self, workspace_id: uuid.UUID) -> int:
+        """Read the current generation; ``0`` when missing or Redis is off."""
+        return await self.cache.get_int(self._cache_key_workspace_gen(workspace_id))
+
+    async def _cache_key_detail(self, workspace_id: uuid.UUID, slug: str) -> str:
+        """Key for a single published-post detail response (gen-versioned)."""
+        gen = await self._workspace_cache_gen(workspace_id)
+        return f"{POST_CACHE_KEY_PREFIX}:ws:{workspace_id}:v{gen}:slug:{slug}"
 
     async def _invalidate_workspace_cache(self, workspace_id: uuid.UUID) -> None:
-        """Drop every cached post entry for ``workspace_id``."""
-        await self.cache.invalidate_pattern(self._cache_key_workspace_pattern(workspace_id))
+        """Bump the per-workspace generation, abandoning every prior entry."""
+        await self.cache.incr(self._cache_key_workspace_gen(workspace_id))
 
     @staticmethod
     def _build_detail(post: Post) -> PostDetailResponse:

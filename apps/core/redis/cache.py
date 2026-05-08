@@ -104,6 +104,30 @@ class CacheManager:
         count = await self.redis.exists(*keys)
         return count == len(keys)
 
+    async def incr(self, key: str) -> int:
+        """Atomically increment the integer at ``key``; return the new value.
+
+        Returns ``0`` when Redis is disabled, so callers using the result
+        as a versioned key suffix get a stable initial value rather than
+        a crash.
+        """
+        if not self.redis:
+            return 0
+        return int(await self.redis.client.incr(key))
+
+    async def get_int(self, key: str) -> int:
+        """Return the integer at ``key`` or ``0`` (also when missing / Redis off)."""
+        if not self.redis:
+            return 0
+        raw = await self.redis.get(key)
+        if raw is None:
+            return 0
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            logger.warning("CacheManager - get_int - non-int value, treating as 0", key=key)
+            return 0
+
     async def invalidate_pattern(self, pattern: str) -> int:
         """Delete every key matching ``pattern`` (e.g. ``"user:*"``).
 

@@ -516,7 +516,7 @@ async def test_cache_hit_returns_same_payload_as_miss(
     assert miss.id == hit.id
     assert miss.content_hash == hit.content_hash
 
-    cache_key = post_service._cache_key_detail(workspace.id, post.slug)
+    cache_key = await post_service._cache_key_detail(workspace.id, post.slug)
     cached = await cache_manager.get(cache_key)
     assert cached is not None
     assert cached["id"] == str(post.id)
