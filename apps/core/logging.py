@@ -73,7 +73,7 @@ def record_formatter(record: dict[str, Any]) -> str:  # pragma: no cover
             record["extra"]["trace_id"] = format(span_context.trace_id, "032x")
 
     if record["exception"]:
-        log_format = f"{log_format}{{'{{'}}exception{{'}}'}}"
+        log_format = log_format + "{exception}"
 
     return log_format
 
