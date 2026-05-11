@@ -39,6 +39,8 @@ from apps.blog.constants import (
     AUTOSAVE_FLUSH_LOCK_TTL,
     AUTOSAVE_KEY_PREFIX,
     AUTOSAVE_LOCK_PREFIX,
+    AUTOSAVE_SWEEPER_LEADER_KEY,
+    AUTOSAVE_SWEEPER_LEADER_TTL,
     AUTOSAVE_TTL_SECONDS,
 )
 from apps.core.redis import RedisClient
@@ -76,6 +78,28 @@ redis.call('hset', KEYS[1],
 redis.call('expire', KEYS[1], ARGV[2])
 redis.call('sadd', KEYS[2], ARGV[1])
 return 1
+"""
+
+# Lua script: acquire OR renew the sweeper-leader key in a single round-trip.
+# - if no holder, set value=token with TTL and return 1 (acquired)
+# - if current holder is us (value==token), refresh TTL and return 1 (renewed)
+# - otherwise return 0 (another worker is leader)
+# This collapses the textbook SET-NX-then-EXPIRE acquire and the renew-by-EXPIRE
+# patterns into one EVAL so the call site can be a single boolean check.
+_LEADER_ACQUIRE_OR_RENEW_SCRIPT: str = """
+-- KEYS[1] = leader key
+-- ARGV[1] = this worker's token
+-- ARGV[2] = ttl_seconds
+local current = redis.call('get', KEYS[1])
+if not current then
+  redis.call('set', KEYS[1], ARGV[1], 'EX', ARGV[2])
+  return 1
+elseif current == ARGV[1] then
+  redis.call('expire', KEYS[1], ARGV[2])
+  return 1
+else
+  return 0
+end
 """
 
 # Lua script: compare-and-set on content_hash — only mark the snapshot flushed
@@ -298,6 +322,62 @@ class AutosaveStore:
                         "AutosaveStore - release_lock - eval failed; relying on TTL",
                         post_id=str(post_id),
                     )
+
+    # ------------------------------------------------------------------
+    # sweeper leader election
+    # ------------------------------------------------------------------
+
+    async def acquire_or_renew_sweeper_leadership(
+        self,
+        *,
+        token: str,
+        ttl_seconds: int = AUTOSAVE_SWEEPER_LEADER_TTL,
+    ) -> bool:
+        """Try to become — or remain — the sweeper leader.
+
+        One Lua ``EVAL`` covers all three branches:
+
+        * No current holder → write ``token`` with ``ttl_seconds`` and win.
+        * Current holder is ``token`` (us) → refresh TTL and stay leader.
+        * Some other token holds it → return ``False``; caller must not sweep.
+
+        Returns:
+            True iff this worker is leader after the call.
+        """
+        if self._redis is None:
+            return False
+        result = await self._redis.client.eval(
+            _LEADER_ACQUIRE_OR_RENEW_SCRIPT,
+            1,
+            AUTOSAVE_SWEEPER_LEADER_KEY,
+            token,
+            str(ttl_seconds),
+        )
+        return bool(result)
+
+    async def release_sweeper_leadership(self, *, token: str) -> None:
+        """Drop the leader lock iff this worker still owns it.
+
+        Uses the same compare-and-del Lua as :meth:`acquire_flush_lock`'s
+        release path so a stale token (we lost leadership and a new worker
+        already took over) cannot accidentally clear someone else's hold.
+        Safe to call during shutdown — failures are logged, not raised,
+        because the TTL is the durability backstop.
+        """
+        if self._redis is None:
+            return
+        try:
+            await self._redis.client.eval(
+                _LOCK_RELEASE_SCRIPT,
+                1,
+                AUTOSAVE_SWEEPER_LEADER_KEY,
+                token,
+            )
+        except Exception:
+            logger.warning(
+                "AutosaveStore - release_sweeper_leadership - eval failed; relying on TTL",
+                token=token,
+            )
 
     # ------------------------------------------------------------------
     # key builders

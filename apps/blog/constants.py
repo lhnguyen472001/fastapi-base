@@ -60,9 +60,20 @@ AUTOSAVE_DIRTY_SET: Final[str] = "blog:autosave:dirty"
 AUTOSAVE_LOCK_PREFIX: Final[str] = "blog:autosave:lock"
 AUTOSAVE_TTL_SECONDS: Final[int] = 7 * 24 * 3600
 AUTOSAVE_FLUSH_LOCK_TTL: Final[int] = 30
-AUTOSAVE_SWEEP_INTERVAL: Final[float] = 60.0
+AUTOSAVE_SWEEP_INTERVAL: Final[float] = 2.0
 AUTOSAVE_SWEEP_BATCH: Final[int] = 50
 AUTOSAVE_RATE_LIMIT: Final[str] = "60/minute"
+
+# Sweeper leader election — every uvicorn worker spawns a sweeper task but
+# only the holder of this Redis lock runs ``sweep_once`` each tick. TTL is
+# the budget for a stalled leader: takeover happens within
+# ``AUTOSAVE_SWEEPER_LEADER_TTL + AUTOSAVE_SWEEP_INTERVAL`` seconds.
+AUTOSAVE_SWEEPER_LEADER_KEY: Final[str] = "blog:autosave:sweeper:leader"
+AUTOSAVE_SWEEPER_LEADER_TTL: Final[int] = 5
+# Emit one ``heartbeat`` log line every N leader-ticks so an absence of
+# events is an actionable signal that no worker is currently leader.
+# 15 ticks x 2s interval = ~30s between heartbeats.
+AUTOSAVE_HEARTBEAT_LOG_EVERY: Final[int] = 15
 
 # ---------------------------------------------------------------------------
 # Publish readiness

@@ -1,26 +1,37 @@
 """Periodic flush of dirty autosave snapshots from Redis to Postgres.
 
-The sweeper is a single ``asyncio`` task launched from the FastAPI
-lifespan. Each tick it scans the dirty set, looks up each post's
-workspace via the snapshot HASH, and calls
-:meth:`apps.blog.services.PostService.flush_one` under a per-post Redis
-lock — so even when multiple uvicorn workers run the sweeper, every post
-gets flushed at most once per tick.
+Every uvicorn worker spawns one of these tasks from the FastAPI lifespan,
+but only one task across the fleet does work per tick: workers race for
+a single Redis leader lock and the holder runs ``sweep_once``. Followers
+sleep silently and try to take over on the next tick if the leader's
+lock has expired (worker crashed).
 
-Failures on individual posts are logged and skipped; the loop never
-crashes, only ``asyncio.CancelledError`` from the lifespan teardown
-breaks it out.
+This keeps Redis SSCAN load flat as the web fleet scales — flush
+parallelism is bounded by the dirty rate, not the worker count. Per-post
+flush safety still relies on :meth:`AutosaveStore.acquire_flush_lock`;
+leader election is a coordination optimisation, not the safety net.
+
+Failures on individual posts are logged and skipped. The loop only exits
+on ``asyncio.CancelledError`` from the lifespan teardown, after running
+one final drain pass if this worker happened to be the leader.
 """
 
 from __future__ import annotations
 
 import asyncio
+import datetime
+import uuid
 from collections.abc import Callable
 from contextlib import suppress
 
 from loguru import logger
 
-from apps.blog.constants import AUTOSAVE_SWEEP_BATCH, AUTOSAVE_SWEEP_INTERVAL
+from apps.blog.constants import (
+    AUTOSAVE_HEARTBEAT_LOG_EVERY,
+    AUTOSAVE_SWEEP_BATCH,
+    AUTOSAVE_SWEEP_INTERVAL,
+    AUTOSAVE_SWEEPER_LEADER_TTL,
+)
 from apps.blog.services import PostService
 from apps.blog.store import AutosaveStore
 from apps.core.database.types import SessionType
@@ -33,31 +44,86 @@ async def autosave_sweeper(
     *,
     interval: float = AUTOSAVE_SWEEP_INTERVAL,
     batch_size: int = AUTOSAVE_SWEEP_BATCH,
+    leader_ttl_seconds: int = AUTOSAVE_SWEEPER_LEADER_TTL,
+    heartbeat_every_ticks: int = AUTOSAVE_HEARTBEAT_LOG_EVERY,
 ) -> None:
-    """Run forever, flushing dirty autosave snapshots in bounded batches.
+    """Run forever as a leader-elected flush loop.
 
-    ``session_factory`` is an async-session context-manager factory
-    invoked once per flushed post so each flush gets its own short
-    transaction. We use the project's ``async_session_factory``
-    (writer-bound) directly rather than the request-scoped
-    ``session_factory`` dependency.
+    Each iteration sleeps ``interval`` seconds, attempts to acquire or
+    renew leadership in a single Lua call, and — if leader — runs one
+    ``sweep_once``. The leader emits a periodic structured heartbeat so
+    an observer can distinguish "idle but healthy" from "no leader at
+    all"; followers stay silent.
+
+    ``session_factory`` is the writer-bound ``async_session_factory``
+    context-manager. Each flushed post gets its own short transaction.
     """
     if not autosave_store.enabled:
         logger.info("autosave_sweeper - disabled (Redis off); exiting")
         return
 
+    token = uuid.uuid4().hex
+    is_leader = False
+    tick_count = 0
+    flush_count = 0
+
     logger.info(
         "autosave_sweeper - started",
+        token=token,
         interval=interval,
         batch_size=batch_size,
+        leader_ttl_seconds=leader_ttl_seconds,
     )
 
     try:
         while True:
             await asyncio.sleep(interval)
-            await sweep_once(session_factory, post_service, autosave_store, batch_size=batch_size)
+            acquired = await autosave_store.acquire_or_renew_sweeper_leadership(
+                token=token,
+                ttl_seconds=leader_ttl_seconds,
+            )
+            if not acquired:
+                if is_leader:
+                    logger.warning("autosave_sweeper - lost leadership", token=token)
+                is_leader = False
+                continue
+
+            if not is_leader:
+                logger.info("autosave_sweeper - became leader", token=token)
+            is_leader = True
+
+            tick_count += 1
+            flush_count += await sweep_once(
+                session_factory,
+                post_service,
+                autosave_store,
+                batch_size=batch_size,
+            )
+
+            if tick_count % heartbeat_every_ticks == 0:
+                logger.info(
+                    "autosave_sweeper - heartbeat",
+                    token=token,
+                    tick_count=tick_count,
+                    flush_count=flush_count,
+                )
     except asyncio.CancelledError:
-        logger.info("autosave_sweeper - cancelled; exiting")
+        logger.info(
+            "autosave_sweeper - cancelled",
+            token=token,
+            is_leader=is_leader,
+            tick_count=tick_count,
+            flush_count=flush_count,
+        )
+        if is_leader:
+            with suppress(Exception):
+                await sweep_once(
+                    session_factory,
+                    post_service,
+                    autosave_store,
+                    batch_size=batch_size,
+                )
+            await autosave_store.release_sweeper_leadership(token=token)
         raise
 
 
@@ -89,6 +155,12 @@ async def sweep_once(
                 )
                 if result is not None:
                     flushed += 1
+                    lag_seconds = (datetime.datetime.now(datetime.UTC) - snapshot.updated_at).total_seconds()
+                    logger.info(
+                        "autosave_sweeper - flush ok",
+                        post_id=str(post_id),
+                        lag_seconds=round(lag_seconds, 3),
+                    )
         except Exception:
             logger.exception(
                 "autosave_sweeper - flush failed; will retry next tick",

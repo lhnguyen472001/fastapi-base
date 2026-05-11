@@ -14,8 +14,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from apps.blog.constants import AUTOSAVE_DIRTY_SET, AUTOSAVE_KEY_PREFIX, AUTOSAVE_TTL_SECONDS
+from apps.blog.constants import (
+    AUTOSAVE_DIRTY_SET,
+    AUTOSAVE_KEY_PREFIX,
+    AUTOSAVE_SWEEPER_LEADER_KEY,
+    AUTOSAVE_TTL_SECONDS,
+)
 from apps.blog.store import (
+    _LEADER_ACQUIRE_OR_RENEW_SCRIPT,
+    _LOCK_RELEASE_SCRIPT,
     _MARK_FLUSHED_SCRIPT,
     _SAVE_SCRIPT,
     AutosaveSnapshot,
@@ -294,3 +301,81 @@ class TestAcquireFlushLock:
             assert got_lock is False
 
         inner.eval.assert_not_awaited()
+
+
+class TestSweeperLeadership:
+    """Cover :meth:`AutosaveStore.acquire_or_renew_sweeper_leadership` and
+    :meth:`AutosaveStore.release_sweeper_leadership` — the two methods
+    that gate the leader-elected sweeper loop."""
+
+    @pytest.mark.asyncio
+    async def test_acquire_calls_lua_with_leader_key_token_and_ttl(self) -> None:
+        # Arrange
+        redis, inner = _make_redis_mock()
+        inner.eval = AsyncMock(return_value=1)
+        store = AutosaveStore(redis_client=redis)
+
+        # Act
+        ok = await store.acquire_or_renew_sweeper_leadership(token="tok-A", ttl_seconds=7)
+
+        # Assert
+        assert ok is True
+        inner.eval.assert_awaited_once()
+        call = inner.eval.await_args
+        assert call.args[0] == _LEADER_ACQUIRE_OR_RENEW_SCRIPT
+        assert call.args[1] == 1  # numkeys
+        assert call.args[2] == AUTOSAVE_SWEEPER_LEADER_KEY
+        assert call.args[3] == "tok-A"
+        assert call.args[4] == "7"
+
+    @pytest.mark.asyncio
+    async def test_acquire_returns_false_when_another_worker_holds_lock(self) -> None:
+        # Arrange
+        redis, inner = _make_redis_mock()
+        inner.eval = AsyncMock(return_value=0)  # Lua: someone else's token
+        store = AutosaveStore(redis_client=redis)
+
+        # Act
+        ok = await store.acquire_or_renew_sweeper_leadership(token="tok-B")
+
+        # Assert
+        assert ok is False
+
+    @pytest.mark.asyncio
+    async def test_acquire_short_circuits_when_redis_disabled(self) -> None:
+        store = AutosaveStore(redis_client=None)
+        ok = await store.acquire_or_renew_sweeper_leadership(token="tok")
+        assert ok is False
+
+    @pytest.mark.asyncio
+    async def test_release_runs_compare_and_del_lua(self) -> None:
+        # Arrange
+        redis, inner = _make_redis_mock()
+        store = AutosaveStore(redis_client=redis)
+
+        # Act
+        await store.release_sweeper_leadership(token="tok-A")
+
+        # Assert
+        inner.eval.assert_awaited_once()
+        call = inner.eval.await_args
+        assert call.args[0] == _LOCK_RELEASE_SCRIPT
+        assert call.args[1] == 1
+        assert call.args[2] == AUTOSAVE_SWEEPER_LEADER_KEY
+        assert call.args[3] == "tok-A"
+
+    @pytest.mark.asyncio
+    async def test_release_swallows_eval_failure(self) -> None:
+        """Shutdown must complete even if Redis briefly refuses the release."""
+        # Arrange
+        redis, inner = _make_redis_mock()
+        inner.eval = AsyncMock(side_effect=RuntimeError("conn reset"))
+        store = AutosaveStore(redis_client=redis)
+
+        # Act / Assert — no exception leaks out
+        await store.release_sweeper_leadership(token="tok-A")
+
+    @pytest.mark.asyncio
+    async def test_release_no_op_when_redis_disabled(self) -> None:
+        store = AutosaveStore(redis_client=None)
+        await store.release_sweeper_leadership(token="tok")  # no exception
