@@ -76,6 +76,18 @@ services:
       # Rate limiting — share Redis (db index 1) so limits are
       # consistent across uvicorn workers.
       RATE_LIMIT_STORAGE_URI: redis://redis:6379/1
+      # Observability — flip these on AFTER starting compose.observability.yml.
+      # The otel-collector hostname only resolves when the observability
+      # profile is up. Uncomment to ship traces / logs / metrics to it.
+      # OBSERVABILITY_ENABLED: "true"
+      # OBSERVABILITY_OTLP_ENDPOINT: http://otel-collector:4317
+      # Opt into stable HTTP semantic conventions so the FastAPI instrumentor
+      # emits ``http.server.request.duration`` (seconds) with the new label set
+      # (``http_response_status_code``, ``http_request_method``). The provisioned
+      # Grafana dashboard queries these names — without the opt-in the
+      # instrumentor falls back to ``http.server.duration`` (ms) and panels
+      # render empty.
+      # OTEL_SEMCONV_STABILITY_OPT_IN: http
     ports:
       - "8000:8000"
     volumes:

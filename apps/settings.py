@@ -267,9 +267,44 @@ class ObservabilitySettings(BaseModel):
     otlp_endpoint: str | None = Field(
         default=None,
         description=(
-            "OTLP/gRPC endpoint for the BatchSpanProcessor. "
+            "Default OTLP/gRPC endpoint used by traces, logs, and metrics "
+            "when no signal-specific override is set. "
             "Example: http://otel-collector:4317 — leave empty to skip exporting."
         ),
+    )
+    otlp_logs_endpoint: str | None = Field(
+        default=None,
+        description=(
+            "OTLP/gRPC endpoint for the LogRecord exporter. Falls back to "
+            "``otlp_endpoint`` when unset. Leave empty to disable log export "
+            "while keeping traces/metrics."
+        ),
+    )
+    otlp_metrics_endpoint: str | None = Field(
+        default=None,
+        description=(
+            "OTLP/gRPC endpoint for the periodic metric reader. Falls back to "
+            "``otlp_endpoint`` when unset. Leave empty to disable metric export."
+        ),
+    )
+    logs_export_enabled: bool = Field(
+        default=True,
+        description=(
+            "Install the OTel LoggerProvider + loguru OTLP sink when "
+            "observability is enabled. Disable to keep logs local."
+        ),
+    )
+    metrics_export_enabled: bool = Field(
+        default=True,
+        description=(
+            "Install the OTel MeterProvider + periodic OTLP exporter when "
+            "observability is enabled. Disable to skip metrics."
+        ),
+    )
+    metric_export_interval_millis: int = Field(
+        default=30_000,
+        ge=1_000,
+        description="Interval for the OTLP periodic metric reader (milliseconds).",
     )
 
 

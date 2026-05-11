@@ -22,4 +22,4 @@ keys/*.pem
 .serena/
 
 # WIP notes
-blog-crm-backend-performance.md
+docs/*.md

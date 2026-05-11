@@ -1,0 +1,66 @@
+# OpenTelemetry Collector configuration for fastapi-base.
+#
+# Pipelines:
+#   traces  -> Tempo (OTLP gRPC)
+#   metrics -> Prometheus exporter (scraped by Prometheus on :8889)
+#   logs    -> Loki (OTLP HTTP)
+#
+# The contrib distribution is required because the loki / prometheus /
+# resourcedetection components are not in core.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+  resource:
+    attributes:
+      - key: service.namespace
+        value: fastapi-base
+        action: upsert
+
+exporters:
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    tls:
+      insecure: true
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    namespace: fastapi_base
+    send_timestamps: true
+    metric_expiration: 5m
+  debug:
+    verbosity: basic
+
+service:
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp/tempo, debug]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [prometheus, debug]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlphttp/loki, debug]

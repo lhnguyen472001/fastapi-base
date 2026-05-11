@@ -1,9 +1,23 @@
 import logging
 import sys
-from typing import Any
+from typing import Any, Final
 
 from loguru import logger
+from opentelemetry._logs import SeverityNumber
+from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.trace import INVALID_SPAN, INVALID_SPAN_CONTEXT, get_current_span
+
+_LOGURU_TO_OTEL_SEVERITY: Final[dict[str, SeverityNumber]] = {
+    "TRACE": SeverityNumber.TRACE,
+    "DEBUG": SeverityNumber.DEBUG,
+    "INFO": SeverityNumber.INFO,
+    "SUCCESS": SeverityNumber.INFO,
+    "WARNING": SeverityNumber.WARN,
+    "ERROR": SeverityNumber.ERROR,
+    "CRITICAL": SeverityNumber.FATAL,
+}
+
+_OTEL_LOGGER_NAME: Final[str] = "fastapi-base.app"
 
 
 class InterceptHandler(logging.Handler):
@@ -41,12 +55,14 @@ def record_formatter(record: dict[str, Any]) -> str:  # pragma: no cover
     log_format = (
         "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> "
         "| <level>{level: <8}</level> "
+        "| <yellow>request_id={extra[request_id]}</yellow> "
         "| <magenta>trace_id={extra[trace_id]}</magenta> "
         "| <blue>span_id={extra[span_id]}</blue> "
         "| <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> "
         "- <level>{message}</level>\n"
     )
 
+    record["extra"].setdefault("request_id", "-")
     span = get_current_span()
     record["extra"]["span_id"] = 0
     record["extra"]["trace_id"] = 0
@@ -83,3 +99,49 @@ def configure_logging() -> None:  # pragma: no cover
         level="INFO",
         format=record_formatter,  # type: ignore
     )
+
+
+def enable_otel_log_export(provider: LoggerProvider, *, level: str = "INFO") -> int:
+    """Register a loguru sink that emits OTel ``LogRecord``s.
+
+    Args:
+        provider: The :class:`opentelemetry.sdk._logs.LoggerProvider` returned
+            by :func:`apps.core.observability._configure_logger_provider`.
+        level: Loguru level threshold for the sink.
+
+    Returns:
+        The loguru sink ID — pass it to ``logger.remove(sink_id)`` to detach
+        (used by tests; production keeps it for the process lifetime).
+    """
+    otel_logger = provider.get_logger(_OTEL_LOGGER_NAME)
+
+    def _sink(message: Any) -> None:
+        record = message.record
+        # Skip OTel SDK's own logs to avoid an export -> log -> export
+        # feedback loop when the collector is unreachable.
+        if record["name"].startswith("opentelemetry"):
+            return
+
+        attributes: dict[str, Any] = {
+            "code.namespace": record["name"],
+            "code.function": record["function"],
+            "code.lineno": record["line"],
+        }
+        request_id = record["extra"].get("request_id")
+        if request_id and request_id != "-":
+            attributes["request_id"] = request_id
+
+        severity_number = _LOGURU_TO_OTEL_SEVERITY.get(
+            record["level"].name,
+            SeverityNumber.UNSPECIFIED,
+        )
+
+        otel_logger.emit(
+            severity_number=severity_number,
+            severity_text=record["level"].name,
+            body=record["message"],
+            timestamp=int(record["time"].timestamp() * 1_000_000_000),
+            attributes=attributes,
+        )
+
+    return logger.add(_sink, level=level, format="{message}")

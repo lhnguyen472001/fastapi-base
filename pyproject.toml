@@ -70,6 +70,9 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
+markers = [
+    "unit: fast in-process tests with no external dependencies",
+]
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]
@@ -138,6 +141,7 @@ ignore = [
 ]
 "alembic/**/*.py" = ["ALL"]
 "apps/__main__.py" = ["T20"]
+"scripts/**/*.py" = ["T20"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["apps"]
