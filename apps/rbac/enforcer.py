@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urlparse
 
 import casbin
 from casbin_async_sqlalchemy_adapter import Adapter
-from casbin_redis_watcher import new_watcher
+from casbin_redis_watcher import WatcherOptions, new_watcher
 from loguru import logger
 
 from apps.settings import app_settings
@@ -50,6 +51,29 @@ def _attach_redis_watcher(enforcer: casbin.AsyncEnforcer, redis_url: str) -> Non
     invalidates every other worker's enforcer on policy mutation, so
     role / permission changes converge in real time.
     """
-    watcher = new_watcher(redis_url)
+    options = _build_watcher_options(redis_url)
+    watcher = new_watcher(options)
     enforcer.set_watcher(watcher)
     logger.info("enforcer_factory - Casbin Redis watcher attached at {url}", url=redis_url)
+
+
+def _build_watcher_options(redis_url: str) -> WatcherOptions:
+    """Translate ``redis://[:password@]host[:port][/db]`` into ``WatcherOptions``.
+
+    ``casbin_redis_watcher.new_watcher`` requires a :class:`WatcherOptions`
+    instance; it builds the underlying ``redis.Redis`` client from
+    ``host`` / ``port`` / ``password`` / ``ssl`` and rejects a URL string.
+    The ``/db`` path segment is irrelevant — Redis pub/sub channels are not
+    scoped by db — so it is parsed for validation only and not propagated.
+    """
+    parsed = urlparse(redis_url)
+    if parsed.scheme not in {"redis", "rediss"}:
+        msg = f"RBAC watcher URL must use redis:// or rediss:// — got {redis_url!r}"
+        raise ValueError(msg)
+
+    options = WatcherOptions()
+    options.host = parsed.hostname or "localhost"
+    options.port = parsed.port or 6379
+    options.password = parsed.password
+    options.ssl = parsed.scheme == "rediss"
+    return options
