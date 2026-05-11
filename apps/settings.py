@@ -336,6 +336,8 @@ class ApplicationSettings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         env_nested_delimiter="_",
+        env_nested_max_split=1,
+        extra="ignore",
     )
 
     # Endpoint settings
