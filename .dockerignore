@@ -23,9 +23,7 @@ coverage.xml
 docs
 claudedocs
 
-# Local environment files & secrets
-.env
-.env.*
+#secrets
 keys
 
 # IDE
