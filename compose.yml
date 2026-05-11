@@ -76,6 +76,12 @@ services:
       # Rate limiting — share Redis (db index 1) so limits are
       # consistent across uvicorn workers.
       RATE_LIMIT_STORAGE_URI: redis://redis:6379/1
+      # Redis — cache + autosave store. host is the compose service name,
+      # not localhost (which inside the container resolves to the api itself).
+      REDIS_ENABLED: "true"
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DATABASE: 0
       # Observability — requires compose.observability.yml profile running
       # so the otel-collector hostname resolves on the compose network.
       OBSERVABILITY_ENABLED: "true"

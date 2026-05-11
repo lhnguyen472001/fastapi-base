@@ -212,7 +212,6 @@ class TokenService:
             "totp_secret": user.totp_secret,
             "is_2fa_enabled": user.is_2fa_enabled,
             "last_totp_counter": user.last_totp_counter,
-            "is_deleted": user.is_deleted,
             "deleted_at": user.deleted_at.isoformat() if user.deleted_at else None,
             "created_at": user.created_at.isoformat() if user.created_at else None,
             "updated_at": user.updated_at.isoformat() if user.updated_at else None,
@@ -241,7 +240,6 @@ class TokenService:
         user.email_verified_at = (
             datetime.datetime.fromisoformat(data["email_verified_at"]) if data["email_verified_at"] else None
         )
-        user.is_deleted = data["is_deleted"]
         user.deleted_at = datetime.datetime.fromisoformat(data["deleted_at"]) if data["deleted_at"] else None
         if data["created_at"]:
             user.created_at = datetime.datetime.fromisoformat(data["created_at"])
