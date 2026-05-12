@@ -109,3 +109,25 @@ def test_pre_write_reads_keep_routing_to_reader() -> None:
     assert second is reader.sync_engine
     assert third is reader.sync_engine
     assert session._wrote is False
+
+
+def test_flush_mapper_only_bind_routes_to_writer() -> None:
+    """Flush-time binds (mapper present, clause=None) must hit the writer.
+
+    Regression: SQLAlchemy's unit-of-work invokes
+    ``get_bind(mapper=..., clause=None)`` once per pending INSERT/UPDATE
+    during ``Session.flush()``. With clause-only routing those flush
+    writes fell through to the reader engine while a subsequent
+    ``session.execute(Update(...))`` (with a clause) correctly hit the
+    writer — two transactions on two connections, FK violations when the
+    UPDATE referenced a row the INSERT just flushed.
+    """
+    reader, writer = _stub_engines()
+    session = _routing_session()
+    session._flushing = True  # what SA sets for the duration of flush()
+
+    with _patched_factory(reader, writer):
+        bind = session.get_bind(_mapper=MagicMock(name="mapper"), clause=None)
+
+    assert bind is writer.sync_engine
+    assert session._wrote is True

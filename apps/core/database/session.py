@@ -52,17 +52,25 @@ class RoutingSession(Session):
     1. ``Update`` / ``Delete`` / ``Insert`` clauses always go to the writer.
     2. ``SELECT ... FOR UPDATE`` goes to the writer (the replica cannot
        hold a row lock that a later write would honour).
-    3. Once any of the above has fired in this session lifetime, every
+    3. Any statement emitted during ``Session.flush()`` goes to the writer.
+       The unit-of-work invokes ``get_bind(mapper=..., clause=None)`` for
+       each pending INSERT/UPDATE/DELETE, so rule 1 alone cannot see them
+       as DML — without the flush signal those writes would land on the
+       reader connection while a follow-up ``session.execute(Update(...))``
+       (which does carry a clause) correctly hits the writer, leaving the
+       two writes in separate transactions on separate connections and
+       triggering FK violations against rows the flush just inserted.
+    4. Once any of the above has fired in this session lifetime, every
        subsequent statement also routes to the writer (sticky read-after-
        write). The flag is reset by ``scoped_session.remove()`` between
        requests because that destroys the session entirely.
-    4. Otherwise (pre-write SELECTs), route to the reader.
+    5. Otherwise (pre-write SELECTs), route to the reader.
 
-    The previous implementation used ``self.in_transaction()`` plus the
-    private ``self._flushing`` attribute to decide writer vs reader. SA
-    autobegins a transaction on the first ``execute``, so under that
-    heuristic every SELECT after the first one routed to the writer —
-    silently wasting the read replica.
+    Earlier revisions used ``self.in_transaction()`` plus ``_flushing``;
+    that combination wasted the replica because SA autobegins on the
+    first execute, so ``in_transaction()`` returned True forever. The
+    current rules use ``_flushing`` only — it is True strictly inside
+    the flush call, which is exactly the window we need to cover.
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -82,7 +90,8 @@ class RoutingSession(Session):
         """Pick the engine for ``clause`` per the routing rules above."""
         is_dml = isinstance(clause, (Update, Delete, Insert))
         is_locking_select = isinstance(clause, Select) and clause._for_update_arg is not None
-        if is_dml or is_locking_select or self._wrote:
+        is_flushing = getattr(self, "_flushing", False)
+        if is_dml or is_locking_select or is_flushing or self._wrote:
             self._wrote = True
             return engine_factory(SQLAlchemyEngineTypes.WRITER).sync_engine
 
