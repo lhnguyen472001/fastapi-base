@@ -31,6 +31,7 @@ from apps.blog.repositories import (
     PostContentRepository,
     PostRepository,
     PostTagRepository,
+    PostVersionRepository,
     TagRepository,
 )
 from apps.blog.schemas import (
@@ -44,7 +45,12 @@ from apps.blog.schemas import (
 )
 from apps.blog.services._autosave import _PostAutosaveMixin
 from apps.blog.store import AutosaveStore
-from apps.blog.utils import compute_content_artifacts, ensure_publish_ready, normalize_slug
+from apps.blog.utils import (
+    compress_content_json,
+    compute_content_artifacts,
+    ensure_publish_ready,
+    normalize_slug,
+)
 from apps.core.database.transactional import transactional
 from apps.core.database.types import SessionType
 from apps.core.database.utils import slugify
@@ -64,6 +70,7 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
         post_tag_repository: PostTagRepository,
         category_repository: CategoryRepository,
         tag_repository: TagRepository,
+        post_version_repository: PostVersionRepository,
         cache: CacheManager,
         autosave_store: AutosaveStore,
     ) -> None:
@@ -72,6 +79,7 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
         self.post_tag_repository = post_tag_repository
         self.category_repository = category_repository
         self.tag_repository = tag_repository
+        self.post_version_repository = post_version_repository
         self.cache = cache
         self.autosave_store = autosave_store
 
@@ -138,6 +146,23 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
                 post_id=post.id,
                 tag_ids=data.tag_ids,
             )
+
+        await self.post_version_repository.add_with_retry(
+            session,
+            data={
+                "post_id": post.id,
+                "workspace_id": workspace_id,
+                "title": post.title,
+                "content_json_compressed": compress_content_json(content_json),
+                "content_text": content_text,
+                "content_hash": content_hash,
+                "created_by": author_id,
+                "change_note": None,
+                "is_published_snapshot": False,
+                "is_restored": False,
+                "status_at_save": post.status,
+            },
+        )
 
         return await self._reload(session, workspace_id=workspace_id, post_id=post.id)
 
@@ -389,6 +414,30 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
                 "published_at": datetime.datetime.now(datetime.UTC),
             },
         )
+
+        # FR-007: the transition into published produces a retention-exempt
+        # snapshot row. The preceding ``flush_one`` already wrote any
+        # in-flight content changes; this row captures the same content
+        # but with ``status_at_save=published`` so the retention sweeper
+        # keeps it forever.
+        if post.content is not None:
+            await self.post_version_repository.add_with_retry(
+                session,
+                data={
+                    "post_id": post.id,
+                    "workspace_id": workspace_id,
+                    "title": post.title,
+                    "content_json_compressed": compress_content_json(post.content.content_json),
+                    "content_text": post.content.content_text,
+                    "content_hash": post.content_hash or "",
+                    "created_by": post.author_id,
+                    "change_note": None,
+                    "is_published_snapshot": True,
+                    "is_restored": False,
+                    "status_at_save": PostStatus.PUBLISHED.value,
+                },
+            )
+
         reloaded = await self._reload(session, workspace_id=workspace_id, post_id=post_id)
         await self._invalidate_workspace_cache(workspace_id)
         return reloaded

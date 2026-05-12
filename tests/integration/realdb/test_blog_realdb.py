@@ -28,6 +28,7 @@ from apps.blog.repositories import (
     PostContentRepository,
     PostRepository,
     PostTagRepository,
+    PostVersionRepository,
     TagRepository,
 )
 from apps.blog.schemas import (
@@ -81,6 +82,7 @@ def post_service() -> PostService:
         post_tag_repository=PostTagRepository(),
         category_repository=CategoryRepository(),
         tag_repository=TagRepository(),
+        post_version_repository=PostVersionRepository(),
         cache=CacheManager(redis_client=None),
         autosave_store=AutosaveStore(redis_client=None),
     )

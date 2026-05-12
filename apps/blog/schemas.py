@@ -21,6 +21,7 @@ from apps.blog.constants import (
     POST_META_TITLE_MAX_LENGTH,
     POST_SLUG_MAX_LENGTH,
     POST_TITLE_MAX_LENGTH,
+    POST_VERSION_CHANGE_NOTE_MAX_LENGTH,
     TAG_NAME_MAX_LENGTH,
     TAG_SLUG_MAX_LENGTH,
 )
@@ -269,3 +270,90 @@ class AutosaveResponse(ResponseObjectSchema):
     reading_minutes: int
     updated_at: datetime.datetime
     persisted: bool
+
+
+# ---------------------------------------------------------------------------
+# Post version history schemas
+# ---------------------------------------------------------------------------
+
+
+class PostVersionAuthor(BaseObjectSchema):
+    """Nested author block on version metadata responses."""
+
+    id: uuid.UUID
+    username: str
+    display_name: str | None = None
+
+
+class PostVersionResponse(ResponseObjectSchema):
+    """Metadata for one row in the version-history list.
+
+    Excludes the full content payload — clients fetch
+    :class:`PostVersionDetailResponse` for that.
+    """
+
+    post_id: uuid.UUID
+    version: int = Field(..., ge=1)
+    title: str
+    content_hash: str = Field(..., min_length=64, max_length=64)
+    change_note: str | None = None
+    is_published_snapshot: bool
+    is_restored: bool
+    status_at_save: str
+    created_at: datetime.datetime
+    created_by: PostVersionAuthor
+
+
+class PostVersionDetailResponse(PostVersionResponse):
+    """Full snapshot — decompressed ProseMirror document plus plain text."""
+
+    content_json: dict = Field(..., description="Tiptap ProseMirror document at version-save time.")
+    content_text: str = Field(..., description="Plain-text body at version-save time.")
+
+
+class RestoreVersionResult(ResponseObjectSchema):
+    """Result envelope for ``POST .../versions/{n}/restore``."""
+
+    post_id: uuid.UUID
+    restored_from_version: int = Field(..., ge=1)
+    new_version: PostVersionResponse
+
+
+class CompareVersionsHunk(BaseObjectSchema):
+    """One line of a unified diff between two version content_texts."""
+
+    op: str = Field(..., pattern=r"^(added|removed|context)$")
+    line: str
+    from_line_no: int | None = None
+    to_line_no: int | None = None
+
+
+class CompareVersionsResult(ResponseObjectSchema):
+    """Structured diff response for ``GET .../versions/compare``."""
+
+    post_id: uuid.UUID
+    from_version: int = Field(..., ge=1)
+    to_version: int = Field(..., ge=1)
+    title_changed: bool
+    from_title: str
+    to_title: str
+    hunks: list[CompareVersionsHunk]
+
+
+class ListPostVersionsRequest(OffsetPaginationRequestSchema):
+    """Query params for the version-history list endpoint.
+
+    Only pagination at this point; future filters (by author, time
+    window, published-only) can be added without changing the route
+    signature.
+    """
+
+
+class RestorePostVersionRequest(RequestObjectSchema):
+    """Optional body for ``POST .../versions/{n}/restore``."""
+
+    change_note: str | None = Field(
+        default=None,
+        max_length=POST_VERSION_CHANGE_NOTE_MAX_LENGTH,
+        description="Overrides the auto-generated change_note on the new version row.",
+    )

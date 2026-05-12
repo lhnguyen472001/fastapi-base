@@ -9,11 +9,13 @@ from apps.blog.repositories import (
     PostContentRepository,
     PostRepository,
     PostTagRepository,
+    PostVersionRepository,
     TagRepository,
 )
-from apps.blog.services import CategoryService, PostService, TagService
+from apps.blog.services import CategoryService, PostService, PostVersionService, TagService
 from apps.blog.store import AutosaveStore
 from apps.core.redis import CacheManager, get_redis_client
+from apps.user.repositories import UserRepository
 
 
 class BlogContainer(containers.DeclarativeContainer):
@@ -43,6 +45,8 @@ class BlogContainer(containers.DeclarativeContainer):
     post_repository = providers.Factory(PostRepository)
     post_content_repository = providers.Factory(PostContentRepository)
     post_tag_repository = providers.Factory(PostTagRepository)
+    post_version_repository = providers.Factory(PostVersionRepository)
+    user_repository = providers.Factory(UserRepository)
 
     category_service = providers.Factory(CategoryService, repository=category_repository)
     tag_service = providers.Factory(TagService, repository=tag_repository)
@@ -53,6 +57,14 @@ class BlogContainer(containers.DeclarativeContainer):
         content_repository=post_content_repository,
         post_tag_repository=post_tag_repository,
         category_repository=category_repository,
+        post_version_repository=post_version_repository,
         cache=cache_manager,
         autosave_store=autosave_store,
+    )
+    post_version_service = providers.Factory(
+        PostVersionService,
+        repository=post_version_repository,
+        post_repository=post_repository,
+        post_content_repository=post_content_repository,
+        user_repository=user_repository,
     )

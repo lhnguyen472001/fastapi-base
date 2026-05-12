@@ -326,6 +326,40 @@ class EmailSettings(BaseModel):
     template_dir: Path = Field(default=Path("apps/core/email/templates"))
 
 
+class BlogSettings(BaseModel):
+    """Blog-module operational tunables.
+
+    Env vars use the ``BLOG_`` prefix and map onto these fields via the
+    project-wide ``env_nested_delimiter='_'`` + ``env_nested_max_split=1``
+    rule, e.g. ``BLOG_POST_VERSION_RETENTION_LIMIT=25`` →
+    ``app_settings.blog.post_version_retention_limit``.
+    """
+
+    post_version_retention_limit: int = Field(
+        default=20,
+        ge=1,
+        description=(
+            "Cap on non-published draft versions kept per post. The retention "
+            "sweeper trims older non-published rows; published-snapshot rows "
+            "are never purged."
+        ),
+    )
+    post_version_compression_level: int = Field(
+        default=3,
+        ge=1,
+        le=22,
+        description=(
+            "zstd compression level for ``post_versions.content_json_compressed``. "
+            "1=fast, 22=max ratio; level 3 is the standard speed/ratio balance."
+        ),
+    )
+    post_version_sweep_interval: float = Field(
+        default=600.0,
+        ge=1.0,
+        description="Seconds between post-version retention-sweep ticks.",
+    )
+
+
 _DEFAULT_DEV_DB_PASSWORD = "postgres"  # noqa: S105 — sentinel value compared against, not a real password
 
 
@@ -366,6 +400,7 @@ class ApplicationSettings(BaseSettings):
         default_factory=ObservabilitySettings,
         description="OpenTelemetry tracing settings",
     )
+    blog: BlogSettings = Field(default_factory=BlogSettings, description="Blog-module operational tunables")
 
     @model_validator(mode="after")
     def _enforce_production_safety(self) -> "ApplicationSettings":

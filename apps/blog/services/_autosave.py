@@ -20,10 +20,14 @@ from apps.blog.exceptions import (
     PostNotFoundError,
 )
 from apps.blog.models import Post, PostContent
-from apps.blog.repositories import PostContentRepository, PostRepository
+from apps.blog.repositories import (
+    PostContentRepository,
+    PostRepository,
+    PostVersionRepository,
+)
 from apps.blog.schemas import PostDetailResponse
-from apps.blog.store import AutosaveStore
-from apps.blog.utils import compute_content_artifacts
+from apps.blog.store import AutosaveSnapshot, AutosaveStore
+from apps.blog.utils import compress_content_json, compute_content_artifacts
 from apps.core.database.transactional import transactional
 from apps.core.database.types import SessionType
 from apps.core.redis import CacheManager
@@ -40,6 +44,7 @@ class _PostAutosaveMixin:
 
     repository: PostRepository
     content_repository: PostContentRepository
+    post_version_repository: PostVersionRepository
     cache: CacheManager
     autosave_store: AutosaveStore
 
@@ -199,9 +204,68 @@ class _PostAutosaveMixin:
                 },
             )
 
+            await self._write_post_version(
+                session,
+                post=post,
+                workspace_id=workspace_id,
+                snapshot=snapshot,
+                content_text=content_text,
+                content_hash=content_hash,
+            )
+
             await self.autosave_store.mark_flushed(post_id, content_hash=content_hash)
             await self._invalidate_workspace_cache(workspace_id)
             return await self._reload(session, workspace_id=workspace_id, post_id=post_id)
+
+    async def _write_post_version(
+        self,
+        session: SessionType,
+        *,
+        post: Post,
+        workspace_id: uuid.UUID,
+        snapshot: AutosaveSnapshot,
+        content_text: str,
+        content_hash: str,
+    ) -> None:
+        """Append a row to ``post_versions`` reflecting this flush.
+
+        Implements FR-001 (every persist creates a version), FR-004
+        (skip when content and title are unchanged vs. the previous
+        version), and FR-007 (mark ``is_published_snapshot`` on the
+        version row where the post's ``status`` transitions into
+        ``published``).
+        """
+        previous = await self.post_version_repository.find_latest_for_post(
+            session,
+            post_id=post.id,
+        )
+        if (
+            previous is not None
+            and previous.content_hash == content_hash
+            and previous.title == post.title
+        ):
+            return
+
+        is_publish_transition = post.status == PostStatus.PUBLISHED.value and (
+            previous is None or previous.status_at_save != PostStatus.PUBLISHED.value
+        )
+
+        await self.post_version_repository.add_with_retry(
+            session,
+            data={
+                "post_id": post.id,
+                "workspace_id": workspace_id,
+                "title": post.title,
+                "content_json_compressed": compress_content_json(snapshot.content_json),
+                "content_text": content_text,
+                "content_hash": content_hash,
+                "created_by": snapshot.author_id,
+                "change_note": None,
+                "is_published_snapshot": is_publish_transition,
+                "is_restored": False,
+                "status_at_save": post.status,
+            },
+        )
 
     async def get_for_admin(
         self,

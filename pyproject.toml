@@ -33,6 +33,7 @@ dependencies = [
     "slowapi>=0.1.9",
     "sqlalchemy[asyncio]>=2.0.48",
     "uvicorn>=0.44.0",
+    "zstandard>=0.23.0",
 ]
 
 [project.scripts]

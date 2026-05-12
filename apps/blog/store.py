@@ -42,6 +42,8 @@ from apps.blog.constants import (
     AUTOSAVE_SWEEPER_LEADER_KEY,
     AUTOSAVE_SWEEPER_LEADER_TTL,
     AUTOSAVE_TTL_SECONDS,
+    POST_VERSION_SWEEPER_LEADER_KEY,
+    POST_VERSION_SWEEPER_LEADER_TTL,
 )
 from apps.core.redis import RedisClient
 
@@ -376,6 +378,47 @@ class AutosaveStore:
         except Exception:
             logger.warning(
                 "AutosaveStore - release_sweeper_leadership - eval failed; relying on TTL",
+                token=token,
+            )
+
+    async def acquire_or_renew_version_sweeper_leadership(
+        self,
+        *,
+        token: str,
+        ttl_seconds: int = POST_VERSION_SWEEPER_LEADER_TTL,
+    ) -> bool:
+        """Leader-election for the post-version retention sweeper.
+
+        Distinct from :meth:`acquire_or_renew_sweeper_leadership` only in
+        the key it operates on — autosave and version sweepers run on
+        different cadences (seconds vs minutes) and must not block each
+        other on a shared lock.
+        """
+        if self._redis is None:
+            return False
+        result = await self._redis.client.eval(
+            _LEADER_ACQUIRE_OR_RENEW_SCRIPT,
+            1,
+            POST_VERSION_SWEEPER_LEADER_KEY,
+            token,
+            str(ttl_seconds),
+        )
+        return bool(result)
+
+    async def release_version_sweeper_leadership(self, *, token: str) -> None:
+        """Drop the version-sweeper leader lock iff this worker still owns it."""
+        if self._redis is None:
+            return
+        try:
+            await self._redis.client.eval(
+                _LOCK_RELEASE_SCRIPT,
+                1,
+                POST_VERSION_SWEEPER_LEADER_KEY,
+                token,
+            )
+        except Exception:
+            logger.warning(
+                "AutosaveStore - release_version_sweeper_leadership - eval failed; relying on TTL",
                 token=token,
             )
 

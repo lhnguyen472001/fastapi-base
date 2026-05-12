@@ -115,6 +115,7 @@ class UserContainer(containers.DeclarativeContainer):
 ## Important
 
 - **RBAC / Casbin & multi-worker:** the Casbin enforcer is per-worker in-memory. Running with `uvicorn --workers >1` will cause stale-cache reads after policy mutations until each worker reloads. Stay on `--workers 1` until a Casbin watcher (e.g. Redis pub/sub) is wired in. See `apps/rbac/enforcer.py` warning.
+- **Post-version retention sweeper:** the FastAPI lifespan starts a background `post_version_sweeper` task alongside the autosave sweeper. Both use leader-elected Redis locks (distinct keys), so any worker count is safe; with Redis off the sweeper exits cleanly and retention is not enforced. Tunables live in `apps/blog/constants.py` (`POST_VERSION_RETENTION_LIMIT`, `POST_VERSION_SWEEP_INTERVAL`, etc.). See `apps/blog/sweeper.py:post_version_sweeper`.
 - **Imports:** Use `apps.*` prefix for all local imports (e.g., `from apps.core.database.engine import ...`)
 - **Sessions:** Use `Depends(session_factory)` in routes — auto read/write split via `RoutingSession`
 - **No session ops in services:** Services MUST NOT call `session.add` / `session.flush` / `session.refresh` / `session.delete` / `session.execute` / `session.merge` (or any other `session.*` method) directly. The only thing a service may do with the session is pass it as the first argument to a repository method. Persistence patterns map as follows:
@@ -135,3 +136,8 @@ class UserContainer(containers.DeclarativeContainer):
 - **Responses:** Wrap all API responses in `APIResponse[T]` with `ResponseCodes` and `JsonResponseStatuses`
 - **Constants:** Module-level literal constants (URLs, TTLs, timeouts, cookie names, key prefixes, bcrypt cost factors, etc.) MUST live in a per-module `constants.py` (e.g. `apps/auth/constants.py`, `apps/rbac/constants.py`) and be typed with `typing.Final[T]`. NEVER define constants inline in service / route / repository / model / DI-container files — even if only used within that module. Importers should `from apps.<module>.constants import NAME`. This keeps all tunables in one greppable place per module and makes test overrides trivial.
 - All rules in `.claude/rules/` apply to every coding task
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan: [specs/001-post-history/plan.md](specs/001-post-history/plan.md)
+<!-- SPECKIT END -->

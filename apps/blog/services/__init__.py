@@ -12,5 +12,6 @@ Importers should keep using ``from apps.blog.services import ...``.
 from apps.blog.services._categories import CategoryService
 from apps.blog.services._posts import PostService
 from apps.blog.services._tags import TagService
+from apps.blog.services._versions import PostVersionService
 
-__all__ = ("CategoryService", "PostService", "TagService")
+__all__ = ("CategoryService", "PostService", "PostVersionService", "TagService")

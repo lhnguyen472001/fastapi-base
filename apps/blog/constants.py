@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 from typing import Final
 
+from apps.settings import app_settings
+
 # Slug pattern shared by Post / Category / Tag — URL-safe lowercase,
 # alphanumeric + hyphen, must start and end with an alphanumeric.
 BLOG_SLUG_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,278}[a-z0-9])?$")
@@ -80,3 +82,17 @@ AUTOSAVE_HEARTBEAT_LOG_EVERY: Final[int] = 15
 # ---------------------------------------------------------------------------
 
 MIN_PUBLISH_BODY_CHARS: Final[int] = 50
+
+# ---------------------------------------------------------------------------
+# Post version history (post_versions table)
+# ---------------------------------------------------------------------------
+
+POST_VERSION_RETENTION_LIMIT: Final[int] = app_settings.blog.post_version_retention_limit
+POST_VERSION_COMPRESSION_LEVEL: Final[int] = app_settings.blog.post_version_compression_level
+POST_VERSION_SWEEP_INTERVAL: Final[float] = app_settings.blog.post_version_sweep_interval
+POST_VERSION_SWEEP_BATCH: Final[int] = 200
+POST_VERSION_SWEEPER_LEADER_KEY: Final[str] = "blog:post_version:sweeper:leader"
+POST_VERSION_SWEEPER_LEADER_TTL: Final[int] = 1800
+POST_VERSION_DIFF_MAX_BYTES: Final[int] = 1_048_576
+POST_VERSION_CHANGE_NOTE_MAX_LENGTH: Final[int] = 280
+POST_VERSION_INSERT_RETRY_LIMIT: Final[int] = 3

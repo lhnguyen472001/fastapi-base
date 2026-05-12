@@ -8,18 +8,37 @@ The pipeline runs in two paths:
 * The full path (text + sanitized HTML + hash + word count + reading
   minutes) lives in :func:`compute_content_artifacts` below and runs at
   create / update / publish / flush_one time.
+
+zstd compression for ``post_versions.content_json_compressed`` and the
+line-based diff used by ``PostVersionService.compare`` also live here
+so every post-content helper stays in one module.
 """
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import math
+import uuid
 from typing import Any
 
-from apps.blog.constants import BLOG_SLUG_PATTERN, MIN_PUBLISH_BODY_CHARS, WORDS_PER_MINUTE
-from apps.blog.exceptions import PostPublishContentError
+import orjson
+import zstandard
+
+from apps.blog.constants import (
+    BLOG_SLUG_PATTERN,
+    MIN_PUBLISH_BODY_CHARS,
+    POST_VERSION_COMPRESSION_LEVEL,
+    WORDS_PER_MINUTE,
+)
+from apps.blog.exceptions import (
+    PostPublishContentError,
+    PostVersionContentUnreadableError,
+    PostVersionDiffTooLargeError,
+)
 from apps.blog.models import Post
+from apps.blog.schemas import CompareVersionsHunk, CompareVersionsResult
 from apps.core.database.utils import slugify
 from apps.core.tiptap import extract_text, render_html, sanitize_html
 
@@ -65,3 +84,172 @@ def compute_content_artifacts(content_json: dict[str, Any]) -> tuple[str, str, s
     word_count = len(text.split()) if text else 0
     reading_minutes = max(1, math.ceil(word_count / WORDS_PER_MINUTE)) if word_count > 0 else 0
     return text, html, digest, word_count, reading_minutes
+
+
+def compress_content_json(payload: dict[str, Any]) -> bytes:
+    """Serialize ``payload`` to compact JSON and zstd-compress it.
+
+    Used by the post-version save path to keep
+    ``post_versions.content_json_compressed`` small. orjson produces a
+    compact, deterministic byte string and zstd at level
+    :data:`POST_VERSION_COMPRESSION_LEVEL` typically reduces a ProseMirror
+    payload to under 40% of the raw size at < 5 ms on a modern x86 core.
+    """
+    serialized = orjson.dumps(payload)
+    compressor = zstandard.ZstdCompressor(level=POST_VERSION_COMPRESSION_LEVEL)
+    return compressor.compress(serialized)
+
+
+def decompress_content_json(blob: bytes) -> dict[str, Any]:
+    """Inverse of :func:`compress_content_json`.
+
+    Raises:
+        PostVersionContentUnreadableError: when the bytes are not a valid
+            zstd frame or the decoded payload is not a JSON object.
+    """
+    try:
+        decompressor = zstandard.ZstdDecompressor()
+        raw = decompressor.decompress(blob)
+        decoded = orjson.loads(raw)
+    except (zstandard.ZstdError, orjson.JSONDecodeError, ValueError) as exc:
+        raise PostVersionContentUnreadableError(
+            message=f"Cannot decode post-version payload: {exc.__class__.__name__}",
+        ) from exc
+    if not isinstance(decoded, dict):
+        raise PostVersionContentUnreadableError(
+            message="Post-version payload is not a JSON object.",
+        )
+    return decoded
+
+
+def diff_versions(
+    *,
+    post_id: uuid.UUID,
+    from_version: int,
+    from_title: str,
+    from_text: str,
+    to_version: int,
+    to_title: str,
+    to_text: str,
+    max_bytes: int,
+) -> CompareVersionsResult:
+    """Return a structured line diff from ``from_text`` to ``to_text``.
+
+    Computes hunks via :class:`difflib.SequenceMatcher` opcodes over the
+    *plaintext* extraction (``content_text``) of each version — diffing
+    structured ProseMirror docs is out of scope for v1.
+
+    The diff is symmetric: ``diff_versions(a, b)`` followed by
+    ``diff_versions(b, a)`` swaps every ``added`` / ``removed`` op,
+    which is what an editor showing a "swap from/to" toggle needs.
+
+    Args:
+        post_id: The post both versions belong to (echoed in the result).
+        from_version: Numeric version on the source side.
+        from_title: Title of the source version (frozen at save time).
+        from_text: Plain-text body of the source version.
+        to_version: Numeric version on the target side.
+        to_title: Title of the target version.
+        to_text: Plain-text body of the target version.
+        max_bytes: Hard cap on combined UTF-8 byte size of the two
+            payloads. Over the cap raises
+            :class:`PostVersionDiffTooLargeError` (POSTV005 / 413).
+
+    Returns:
+        :class:`CompareVersionsResult` with one hunk per line — every
+        line of either side appears exactly once, tagged ``added``,
+        ``removed``, or ``context``.
+
+    Raises:
+        PostVersionDiffTooLargeError: combined input exceeds ``max_bytes``.
+    """
+    _enforce_diff_size_cap(from_text, to_text, max_bytes=max_bytes)
+
+    from_lines = from_text.splitlines()
+    to_lines = to_text.splitlines()
+
+    hunks = _build_diff_hunks(from_lines, to_lines)
+    return CompareVersionsResult(
+        post_id=post_id,
+        from_version=from_version,
+        to_version=to_version,
+        title_changed=from_title != to_title,
+        from_title=from_title,
+        to_title=to_title,
+        hunks=hunks,
+    )
+
+
+def _enforce_diff_size_cap(from_text: str, to_text: str, *, max_bytes: int) -> None:
+    """Reject inputs whose combined UTF-8 size exceeds ``max_bytes``."""
+    combined = len(from_text.encode("utf-8")) + len(to_text.encode("utf-8"))
+    if combined > max_bytes:
+        raise PostVersionDiffTooLargeError(
+            message=f"Combined version content is {combined} bytes; cap is {max_bytes} bytes.",
+        )
+
+
+def _build_diff_hunks(from_lines: list[str], to_lines: list[str]) -> list[CompareVersionsHunk]:
+    """Convert SequenceMatcher opcodes into a flat list of hunks.
+
+    Each output hunk represents exactly one line. ``op='context'``
+    populates both ``from_line_no`` and ``to_line_no``; ``op='removed'``
+    leaves ``to_line_no=None``; ``op='added'`` leaves
+    ``from_line_no=None``. Line numbers are 1-based to match what an
+    editor diff UI typically displays.
+    """
+    matcher = difflib.SequenceMatcher(a=from_lines, b=to_lines, autojunk=False)
+    hunks: list[CompareVersionsHunk] = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            for offset, line in enumerate(from_lines[i1:i2]):
+                hunks.append(
+                    CompareVersionsHunk(
+                        op="context",
+                        line=line,
+                        from_line_no=i1 + offset + 1,
+                        to_line_no=j1 + offset + 1,
+                    ),
+                )
+        elif tag == "delete":
+            for offset, line in enumerate(from_lines[i1:i2]):
+                hunks.append(
+                    CompareVersionsHunk(
+                        op="removed",
+                        line=line,
+                        from_line_no=i1 + offset + 1,
+                        to_line_no=None,
+                    ),
+                )
+        elif tag == "insert":
+            for offset, line in enumerate(to_lines[j1:j2]):
+                hunks.append(
+                    CompareVersionsHunk(
+                        op="added",
+                        line=line,
+                        from_line_no=None,
+                        to_line_no=j1 + offset + 1,
+                    ),
+                )
+        elif tag == "replace":
+            # Emit removed-then-added so the order in the response matches
+            # what a textual reader expects (delete old, then introduce new).
+            for offset, line in enumerate(from_lines[i1:i2]):
+                hunks.append(
+                    CompareVersionsHunk(
+                        op="removed",
+                        line=line,
+                        from_line_no=i1 + offset + 1,
+                        to_line_no=None,
+                    ),
+                )
+            for offset, line in enumerate(to_lines[j1:j2]):
+                hunks.append(
+                    CompareVersionsHunk(
+                        op="added",
+                        line=line,
+                        from_line_no=None,
+                        to_line_no=j1 + offset + 1,
+                    ),
+                )
+    return hunks

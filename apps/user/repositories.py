@@ -102,3 +102,24 @@ class UserRepository(BaseSQLAlchemyRepository[User]):
         )
         result = await session.execute(stmt)
         return set(result.scalars().all())
+
+    async def find_by_ids(
+        self,
+        session: AsyncSession,
+        *,
+        user_ids: Sequence[uuid.UUID],
+        include_deleted: bool = False,
+    ) -> list[User]:
+        """Batch-load users by id. Order is not guaranteed.
+
+        Used by :class:`apps.blog.services.PostVersionService` to hydrate
+        ``created_by`` on a page of version rows in one query.
+        """
+        ids = list(user_ids)
+        if not ids:
+            return []
+        stmt = select(User).where(User.id.in_(ids))
+        if not include_deleted:
+            stmt = stmt.where(User.deleted_at.is_(None))
+        result = await session.execute(stmt)
+        return list(result.scalars().all())

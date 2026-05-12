@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 
 from dependency_injector.wiring import Provide, inject
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.auth.dependencies import get_current_user
@@ -22,20 +22,26 @@ from apps.blog.schemas import (
     AutosavePostRequest,
     AutosaveResponse,
     CategoryResponse,
+    CompareVersionsResult,
     CreateCategoryRequest,
     CreatePostRequest,
     CreateTagRequest,
     ListCategoriesRequest,
     ListPostsRequest,
+    ListPostVersionsRequest,
     ListTagsRequest,
     PostDetailResponse,
     PostResponse,
+    PostVersionDetailResponse,
+    PostVersionResponse,
+    RestorePostVersionRequest,
+    RestoreVersionResult,
     TagResponse,
     UpdateCategoryRequest,
     UpdatePostRequest,
     UpdateTagRequest,
 )
-from apps.blog.services import CategoryService, PostService, TagService
+from apps.blog.services import CategoryService, PostService, PostVersionService, TagService
 from apps.core.database.session import session_factory
 from apps.core.rate_limit import limiter
 from apps.core.schemas.response import APIResponse, PaginatedResponse
@@ -453,6 +459,126 @@ async def delete_post(
     return APIResponse[PostResponse].success(
         data=PostResponse.model_validate(post),
         message="Post deleted successfully.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Post version history
+# ---------------------------------------------------------------------------
+
+
+@blog_admin_router.get(
+    "/posts/{post_id}/versions",
+    response_model=APIResponse[PaginatedResponse[PostVersionResponse]],
+)
+@inject
+async def list_post_versions(
+    post_id: uuid.UUID,
+    params: ListPostVersionsRequest = Depends(),
+    workspace: Workspace = Depends(require_workspace_member()),
+    session: AsyncSession = Depends(session_factory),
+    post_version_service: PostVersionService = Depends(Provide[BlogContainer.post_version_service]),
+) -> APIResponse[PaginatedResponse[PostVersionResponse]]:
+    """List versions for a post (newest-first). Any workspace member can view."""
+    page = await post_version_service.list_for_post(
+        session,
+        workspace_id=workspace.id,
+        post_id=post_id,
+        limit=params.limit,
+        offset=params.offset,
+    )
+    return APIResponse[PaginatedResponse[PostVersionResponse]].success(
+        data=page,
+        message="Post versions retrieved successfully.",
+    )
+
+
+@blog_admin_router.get(
+    "/posts/{post_id}/versions/compare",
+    response_model=APIResponse[CompareVersionsResult],
+)
+@inject
+async def compare_post_versions(
+    post_id: uuid.UUID,
+    from_version: int = Query(..., alias="from", ge=1),
+    to_version: int = Query(..., alias="to", ge=1),
+    workspace: Workspace = Depends(require_workspace_member()),
+    session: AsyncSession = Depends(session_factory),
+    post_version_service: PostVersionService = Depends(Provide[BlogContainer.post_version_service]),
+) -> APIResponse[CompareVersionsResult]:
+    """Structured line-diff between two versions of the same post.
+
+    Both ``from`` and ``to`` MUST belong to ``post_id``. Combined input
+    over the configured byte cap returns 413; identical from/to is 422.
+    """
+    result = await post_version_service.compare(
+        session,
+        workspace_id=workspace.id,
+        post_id=post_id,
+        from_version=from_version,
+        to_version=to_version,
+    )
+    return APIResponse[CompareVersionsResult].success(
+        data=result,
+        message="Post versions compared successfully.",
+    )
+
+
+@blog_admin_router.get(
+    "/posts/{post_id}/versions/{version}",
+    response_model=APIResponse[PostVersionDetailResponse],
+)
+@inject
+async def get_post_version(
+    post_id: uuid.UUID,
+    version: int,
+    workspace: Workspace = Depends(require_workspace_member()),
+    session: AsyncSession = Depends(session_factory),
+    post_version_service: PostVersionService = Depends(Provide[BlogContainer.post_version_service]),
+) -> APIResponse[PostVersionDetailResponse]:
+    """Fetch the full historical content of one version. Any workspace member."""
+    detail = await post_version_service.get_for_post(
+        session,
+        workspace_id=workspace.id,
+        post_id=post_id,
+        version=version,
+    )
+    return APIResponse[PostVersionDetailResponse].success(
+        data=detail,
+        message="Post version retrieved successfully.",
+    )
+
+
+@blog_admin_router.post(
+    "/posts/{post_id}/versions/{version}/restore",
+    response_model=APIResponse[RestoreVersionResult],
+)
+@inject
+async def restore_post_version(
+    post_id: uuid.UUID,
+    version: int,
+    data: RestorePostVersionRequest | None = None,
+    workspace: Workspace = Depends(require_workspace_role(WorkspaceRole.OWNER, WorkspaceRole.EDITOR)),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(session_factory),
+    post_version_service: PostVersionService = Depends(Provide[BlogContainer.post_version_service]),
+) -> APIResponse[RestoreVersionResult]:
+    """Restore a historical version as the post's working copy. Owner / editor only.
+
+    Does NOT change the post's publication status. The new version row
+    captures the restored state so the restore itself is reversible.
+    """
+    result = await post_version_service.restore(
+        session,
+        workspace_id=workspace.id,
+        post_id=post_id,
+        version=version,
+        actor_id=current_user.id,
+        change_note=data.change_note if data is not None else None,
+    )
+    return APIResponse[RestoreVersionResult].success(
+        data=result,
+        message="Post version restored successfully.",
     )
 
 

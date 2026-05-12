@@ -13,7 +13,7 @@ import datetime
 import uuid
 from typing import Any
 
-from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
+from sqlalchemy.dialects.postgresql import BYTEA, JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql.schema import (
     CheckConstraint,
@@ -224,6 +224,12 @@ class Post(UUIDAuditBase, HasSoftDeletedMixin):
         secondary="post_tags",
         lazy="raise",
     )
+    versions: Mapped[list[PostVersion]] = relationship(
+        "PostVersion",
+        back_populates="post",
+        cascade="all, delete-orphan",
+        lazy="raise",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -250,5 +256,87 @@ class PostContent(UUIDAuditBase):
     post: Mapped[Post] = relationship(
         "Post",
         back_populates="content",
+        lazy="raise",
+    )
+
+
+# ---------------------------------------------------------------------------
+# PostVersion (immutable historical snapshot — append-only)
+# ---------------------------------------------------------------------------
+
+
+class PostVersion(UUIDAuditBase):
+    """Immutable snapshot of a post at one save (autosave flush or explicit).
+
+    Rows are append-only; the application MUST NOT UPDATE them. The
+    retention sweeper DELETEs rows that fall outside the per-post cap,
+    excluding rows where ``is_published_snapshot`` is true.
+
+    ``status_at_save`` is the post's status at the moment this row was
+    written. The save path derives ``is_published_snapshot`` by
+    comparing this value against the previous version's
+    ``status_at_save``: a transition into "published" marks the row as a
+    permanent snapshot (retention-exempt per FR-016).
+    """
+
+    __table_args__ = (
+        UniqueConstraint("post_id", "version", name="uq_post_versions_post_version"),
+        Index(
+            "ix_post_versions_post_id_version_desc",
+            "post_id",
+            "version",
+            postgresql_ops={"version": "DESC"},
+        ),
+        Index(
+            "ix_post_versions_post_id_created_at_desc",
+            "post_id",
+            "created_at",
+            postgresql_ops={"created_at": "DESC"},
+        ),
+        Index(
+            "ix_post_versions_workspace_published",
+            "workspace_id",
+            "is_published_snapshot",
+            postgresql_where="is_published_snapshot",
+        ),
+        Index(
+            "ix_post_versions_post_id_published_excl",
+            "post_id",
+            postgresql_where="NOT is_published_snapshot",
+        ),
+        CheckConstraint("version >= 1", name="ck_post_versions_version_positive"),
+        CheckConstraint("char_length(content_hash) = 64", name="ck_post_versions_content_hash_len"),
+        CheckConstraint(
+            "NOT (is_published_snapshot AND is_restored)",
+            name="ck_post_versions_publish_xor_restore",
+        ),
+    )
+
+    post_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("posts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    content_json_compressed: Mapped[bytes] = mapped_column(BYTEA, nullable=False)
+    content_text: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    change_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_published_snapshot: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_restored: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    status_at_save: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    post: Mapped[Post] = relationship(
+        "Post",
+        back_populates="versions",
         lazy="raise",
     )
