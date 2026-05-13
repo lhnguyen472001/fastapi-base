@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import uuid
 from collections.abc import Iterable
 from typing import Any
@@ -790,6 +791,65 @@ class PostCommentRepository(BaseSQLAlchemyRepository[PostComment]):
         stmt = select(User.id, User.username).where(User.id.in_(user_ids))
         rows = (await session.execute(stmt)).all()
         return {row[0]: row[1] for row in rows}
+
+    async def find_parent_metadata(
+        self,
+        session: SessionType,
+        *,
+        parent_id: uuid.UUID,
+    ) -> tuple[uuid.UUID, uuid.UUID | None, str, datetime.datetime | None] | None:
+        """Probe a comment for reply-target validation.
+
+        Returns ``(post_id, parent_comment_id, state, deleted_at)`` in a
+        single SELECT (research §9). Caller decides on rejection so the
+        repository stays storage-only.
+        """
+        stmt = select(
+            PostComment.post_id,
+            PostComment.parent_comment_id,
+            PostComment.state,
+            PostComment.deleted_at,
+        ).where(PostComment.id == parent_id)
+        row = (await session.execute(stmt)).first()
+        if row is None:
+            return None
+        return row.post_id, row.parent_comment_id, row.state, row.deleted_at
+
+    async def list_replies_approved(
+        self,
+        session: SessionType,
+        *,
+        parent_id: uuid.UUID,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[PostComment], int]:
+        """Paginated oldest-first list of approved live replies.
+
+        Oldest-first so the reply chain reads as a conversation; uses the
+        partial parent_comment_id index for O(log n) regardless of total
+        comment volume on the post.
+        """
+        base_predicate = (
+            (PostComment.parent_comment_id == parent_id)
+            & (PostComment.state == "approved")
+            & PostComment.deleted_at.is_(None)
+        )
+
+        total = (
+            await session.execute(
+                select(func.count()).select_from(PostComment).where(base_predicate),
+            )
+        ).scalar_one()
+
+        page_stmt = (
+            select(PostComment)
+            .where(base_predicate)
+            .order_by(PostComment.created_at.asc())
+            .limit(limit)
+            .offset(offset)
+        )
+        rows = list((await session.execute(page_stmt)).scalars().all())
+        return rows, int(total)
 
 
 class PostCommentModerationRepository(BaseSQLAlchemyRepository[PostComment]):

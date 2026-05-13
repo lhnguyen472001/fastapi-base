@@ -281,6 +281,99 @@ async def create_post_comment(
 
 
 # ---------------------------------------------------------------------------
+# Engagement — replies (US3, FR-013..FR-016)
+# ---------------------------------------------------------------------------
+
+
+@blog_public_router.get(
+    "/comments/{comment_id}/replies",
+    response_model=APIResponse[PaginatedResponse[PostCommentResponse]],
+)
+@inject
+async def list_post_comment_replies(
+    comment_id: uuid.UUID,
+    params: ListCommentsRequest = Depends(),
+    workspace: Workspace = Depends(get_workspace_by_slug),
+    session: AsyncSession = Depends(session_factory),
+    post_comment_service: PostCommentService = Depends(
+        Provide[BlogContainer.post_comment_service],
+    ),
+) -> APIResponse[PaginatedResponse[PostCommentResponse]]:
+    """Paginated, oldest-first approved replies to a top-level comment.
+
+    Pending / rejected / tombstoned bodies are excluded from the public
+    list. The parent must itself be approved + live + top-level, else the
+    response is 404 (the masking surface for cross-workspace probes too).
+    """
+    page = await post_comment_service.list_replies(
+        session,
+        workspace_id=workspace.id,
+        parent_comment_id=comment_id,
+        limit=params.limit or POST_COMMENTS_LIST_DEFAULT_LIMIT,
+        offset=params.offset,
+    )
+    return APIResponse[PaginatedResponse[PostCommentResponse]].success(
+        data=page,
+        message="Replies retrieved successfully.",
+    )
+
+
+@blog_public_router.post(
+    "/comments/{comment_id}/replies",
+    response_model=APIResponse[PostCommentResponse],
+    status_code=status.HTTP_201_CREATED,
+)
+@limiter.limit(POST_COMMENT_AUTH_RATE_LIMIT, key_func=auth_user_key)
+@limiter.limit(POST_COMMENT_ANONYMOUS_RATE_LIMIT, key_func=anonymous_ip_key)
+@inject
+async def reply_to_post_comment(
+    request: Request,
+    comment_id: uuid.UUID,
+    payload: dict,
+    workspace: Workspace = Depends(get_workspace_by_slug),
+    current_user: User | None = Depends(get_current_user_optional),
+    session: AsyncSession = Depends(session_factory),
+    post_comment_service: PostCommentService = Depends(
+        Provide[BlogContainer.post_comment_service],
+    ),
+) -> APIResponse[PostCommentResponse]:
+    """Reply to a top-level comment (FR-013).
+
+    Same auth/anon dispatch as the comment POST endpoint — authenticated
+    callers use :class:`CreateAuthenticatedCommentRequest`; anonymous
+    callers use :class:`CreateAnonymousCommentRequest` (subject to the
+    workspace's ``allow_anonymous_comments`` flag).
+    """
+    if current_user is not None:
+        auth_req = CreateAuthenticatedCommentRequest.model_validate(payload)
+        reply = await post_comment_service.create_reply_authenticated(
+            session,
+            workspace_id=workspace.id,
+            parent_comment_id=comment_id,
+            author_user_id=current_user.id,
+            data=auth_req,
+        )
+        return APIResponse[PostCommentResponse].success(
+            data=reply,
+            message="Reply created.",
+        )
+
+    anon_req = CreateAnonymousCommentRequest.model_validate(payload)
+    source_ip = request.client.host if request.client else None
+    reply = await post_comment_service.create_reply_anonymous(
+        session,
+        workspace=workspace,
+        parent_comment_id=comment_id,
+        data=anon_req,
+        source_ip=source_ip,
+    )
+    return APIResponse[PostCommentResponse].success(
+        data=reply,
+        message="Reply created.",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Categories
 # ---------------------------------------------------------------------------
 

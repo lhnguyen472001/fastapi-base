@@ -25,6 +25,8 @@ from loguru import logger
 from apps.blog.enums import CommentAuthorKind, CommentState, PostStatus
 from apps.blog.exceptions import (
     AnonymousCommentsDisabledError,
+    CommentNestingTooDeepError,
+    CommentNotFoundError,
     PostEngagementClosedError,
     PostNotFoundError,
 )
@@ -238,6 +240,180 @@ class PostCommentService:
             offset=offset,
         )
 
+    @transactional
+    async def create_reply_authenticated(
+        self,
+        session: SessionType,
+        *,
+        workspace_id: uuid.UUID,
+        parent_comment_id: uuid.UUID,
+        author_user_id: uuid.UUID,
+        data: CreateAuthenticatedCommentRequest,
+    ) -> PostCommentResponse:
+        """Submit a depth-1 authenticated reply to an approved comment.
+
+        Born ``approved``; INSERT trigger ticks ``posts.comment_count``
+        by +1. Cross-workspace isolation comes for free: the parent's
+        post must resolve under the caller-supplied workspace_id, else
+        the load surfaces as ``PostNotFoundError``.
+        """
+        post = await self._validate_parent_and_get_post(
+            session,
+            workspace_id=workspace_id,
+            parent_comment_id=parent_comment_id,
+        )
+        body = _sanitize_comment_body(data.body)
+        row = await self.repository.insert(
+            session,
+            data={
+                "post_id": post.id,
+                "workspace_id": post.workspace_id,
+                "parent_comment_id": parent_comment_id,
+                "author_user_id": author_user_id,
+                "author_display_name": None,
+                "body": body,
+                "state": CommentState.APPROVED.value,
+            },
+        )
+        logger.info(
+            "PostCommentService - create_reply_authenticated - "
+            "parent_id={parent_id} comment_id={comment_id} author_user_id={author_user_id}",
+            parent_id=parent_comment_id,
+            comment_id=row.id,
+            author_user_id=author_user_id,
+        )
+        usernames = await self.repository.fetch_author_usernames(
+            session,
+            user_ids=[author_user_id],
+        )
+        author = PostCommentAuthor(
+            display_name=usernames.get(author_user_id, _DELETED_USER_DISPLAY),
+            user_id=author_user_id,
+            username=usernames.get(author_user_id),
+        )
+        return _row_to_response(row, author=author, reply_count=0)
+
+    @transactional
+    async def create_reply_anonymous(
+        self,
+        session: SessionType,
+        *,
+        workspace: Workspace,
+        parent_comment_id: uuid.UUID,
+        data: CreateAnonymousCommentRequest,
+        source_ip: str | None,
+    ) -> PostCommentResponse:
+        """Submit a depth-1 anonymous reply.
+
+        Gated by ``workspace.allow_anonymous_comments`` (FR-010b); same
+        404-shape used by cross-workspace probes when the flag is OFF.
+        Born ``pending``; counter does NOT move until a moderator
+        approves the row.
+        """
+        if not workspace.allow_anonymous_comments:
+            raise AnonymousCommentsDisabledError(message="Post not found.")
+
+        post = await self._validate_parent_and_get_post(
+            session,
+            workspace_id=workspace.id,
+            parent_comment_id=parent_comment_id,
+        )
+        body = _sanitize_comment_body(data.body)
+        ip = _parse_ip(source_ip)
+        row = await self.repository.insert(
+            session,
+            data={
+                "post_id": post.id,
+                "workspace_id": post.workspace_id,
+                "parent_comment_id": parent_comment_id,
+                "author_user_id": None,
+                "author_display_name": data.author_display_name,
+                "author_email": data.author_email,
+                "author_ip": ip,
+                "body": body,
+                "state": CommentState.PENDING.value,
+            },
+        )
+        logger.info(
+            "PostCommentService - create_reply_anonymous - "
+            "parent_id={parent_id} comment_id={comment_id} display={display}",
+            parent_id=parent_comment_id,
+            comment_id=row.id,
+            display=data.author_display_name,
+        )
+        author = PostCommentAuthor(
+            display_name=data.author_display_name,
+            user_id=None,
+            username=None,
+        )
+        return _row_to_response(row, author=author, reply_count=0)
+
+    async def list_replies(
+        self,
+        session: SessionType,
+        *,
+        workspace_id: uuid.UUID,
+        parent_comment_id: uuid.UUID,
+        limit: int,
+        offset: int,
+    ) -> PaginatedResponse[PostCommentResponse]:
+        """List approved live replies for a comment, oldest-first.
+
+        Cross-workspace probes surface as ``CommentNotFoundError``: we
+        first probe the parent, then verify its post belongs to the
+        caller's workspace. Three round-trips per page (probe + list +
+        username fetch) regardless of page size.
+        """
+        parent_meta = await self.repository.find_parent_metadata(
+            session,
+            parent_id=parent_comment_id,
+        )
+        if parent_meta is None:
+            raise CommentNotFoundError(message="Comment not found.")
+        parent_post_id, parent_parent_id, parent_state, parent_deleted_at = parent_meta
+        if parent_parent_id is not None:
+            raise CommentNotFoundError(message="Comment not found.")
+        if parent_state != CommentState.APPROVED.value or parent_deleted_at is not None:
+            raise CommentNotFoundError(message="Comment not found.")
+
+        post = await self.post_repository.find_by_id(
+            session,
+            workspace_id=workspace_id,
+            post_id=parent_post_id,
+            include_deleted=False,
+            load_content=False,
+        )
+        if post is None:
+            raise CommentNotFoundError(message="Comment not found.")
+
+        rows, total = await self.repository.list_replies_approved(
+            session,
+            parent_id=parent_comment_id,
+            limit=limit,
+            offset=offset,
+        )
+
+        author_ids = [r.author_user_id for r in rows if r.author_user_id is not None]
+        usernames = await self.repository.fetch_author_usernames(
+            session,
+            user_ids=author_ids,
+        )
+
+        items = [
+            _row_to_response(
+                r,
+                author=_author_from_row(r, usernames),
+                reply_count=0,
+            )
+            for r in rows
+        ]
+        return PaginatedResponse[PostCommentResponse](
+            items=items,
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+
     async def _load_open_post(
         self,
         session: SessionType,
@@ -258,6 +434,41 @@ class PostCommentService:
         if post.status == PostStatus.ARCHIVED.value:
             raise PostEngagementClosedError(message="Post is archived and not accepting engagement.")
         return post
+
+    async def _validate_parent_and_get_post(
+        self,
+        session: SessionType,
+        *,
+        workspace_id: uuid.UUID,
+        parent_comment_id: uuid.UUID,
+    ) -> Post:
+        """Probe parent + load + open-check the parent's post.
+
+        Centralises the reply-target validation used by both the
+        authenticated and anonymous reply paths:
+
+        * unknown parent → ``CommentNotFoundError``
+        * parent has its own parent (depth 2) → ``CommentNestingTooDeepError``
+        * parent not approved or soft-deleted → ``CommentNotFoundError``
+        * parent's post not in the caller's workspace → 404 mask via
+          ``PostNotFoundError`` from ``_load_open_post``
+        """
+        parent_meta = await self.repository.find_parent_metadata(
+            session,
+            parent_id=parent_comment_id,
+        )
+        if parent_meta is None:
+            raise CommentNotFoundError(message="Parent comment not found.")
+        parent_post_id, parent_parent_id, parent_state, parent_deleted_at = parent_meta
+        if parent_parent_id is not None:
+            raise CommentNestingTooDeepError(message="Replies cannot be nested beyond one level.")
+        if parent_state != CommentState.APPROVED.value or parent_deleted_at is not None:
+            raise CommentNotFoundError(message="Parent comment not found.")
+        return await self._load_open_post(
+            session,
+            workspace_id=workspace_id,
+            post_id=parent_post_id,
+        )
 
 
 # ---------------------------------------------------------------------------
