@@ -1,4 +1,4 @@
-"""Blog module enums — post lifecycle status."""
+"""Blog module enums — post lifecycle status + comment lifecycle / authorship."""
 
 from __future__ import annotations
 
@@ -19,3 +19,36 @@ class PostStatus(enum.StrEnum):
     DRAFT = "draft"
     PUBLISHED = "published"
     ARCHIVED = "archived"
+
+
+class CommentState(enum.StrEnum):
+    """Moderation lifecycle for :class:`apps.blog.models.PostComment`.
+
+    Orthogonal to soft-delete (``deleted_at``); see data-model.md §3.
+
+    * ``PENDING`` — born here for anonymous comments. NOT returned by any
+      public list endpoint; only moderator endpoints see it.
+    * ``APPROVED`` — visible to public readers. Authenticated comments
+      are born here directly; anonymous comments reach this state only
+      via moderator approval.
+    * ``REJECTED`` — terminal moderation rejection. Never visible to
+      public readers; retained for audit and to keep the moderator queue
+      idempotent against double-clicks.
+    """
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class CommentAuthorKind(enum.StrEnum):
+    """Derived discriminator surfaced on comment response schemas.
+
+    Computed at read time from the row's author shape (whether
+    ``author_user_id`` or ``author_display_name`` is set). NOT stored as
+    a column — the XOR ``CHECK`` constraint on ``post_comments`` is the
+    source of truth.
+    """
+
+    AUTHENTICATED = "authenticated"
+    ANONYMOUS = "anonymous"

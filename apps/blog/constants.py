@@ -108,3 +108,41 @@ POST_VERSION_INSERT_RETRY_LIMIT: Final[int] = 3
 LARGE_CONTENT_BYTES_MIN: Final[int] = 1_024
 LARGE_CONTENT_BYTES_MAX: Final[int] = 16 * 1024 * 1024
 LARGE_CONTENT_BYTES: Final[int] = app_settings.blog.large_content_bytes
+
+# ---------------------------------------------------------------------------
+# Engagement — likes + comments (post_likes + post_comments tables)
+# ---------------------------------------------------------------------------
+
+# Comment body limits.
+POST_COMMENT_BODY_MAX_LENGTH: Final[int] = 4_000
+POST_COMMENT_ANONYMOUS_DISPLAY_NAME_MAX_LENGTH: Final[int] = 80
+POST_COMMENT_ANONYMOUS_EMAIL_MAX_LENGTH: Final[int] = 254
+
+# Edit window for authenticated self-edits (seconds since ``created_at``).
+POST_COMMENT_EDIT_WINDOW_SECONDS: Final[int] = app_settings.blog.post_comment_edit_window_seconds
+
+# Pending-row TTL: the moderation sweeper purges ``state='pending'`` rows
+# older than this many seconds. Default 30 days.
+POST_COMMENT_MODERATION_PENDING_TTL_SECONDS: Final[int] = (
+    app_settings.blog.post_comment_moderation_pending_ttl_seconds
+)
+POST_COMMENT_MODERATION_SWEEP_INTERVAL: Final[float] = (
+    app_settings.blog.post_comment_moderation_sweep_interval
+)
+POST_COMMENT_MODERATION_SWEEP_BATCH: Final[int] = 200
+
+# Leader-elect Redis key for the comment-moderation sweeper. Distinct from
+# the autosave + post-version sweeper keys so all three can coexist
+# without lock contention.
+POST_COMMENT_MODERATION_SWEEPER_LEADER_KEY: Final[str] = "blog:comment_moderation:sweeper:leader"
+POST_COMMENT_MODERATION_SWEEPER_LEADER_TTL: Final[int] = 1_800
+
+# Rate-limit strings (slowapi-formatted). Authenticated keys throttle per
+# ``current_user.id``; the anonymous key throttles per source IP.
+POST_LIKE_RATE_LIMIT: Final[str] = app_settings.blog.post_like_rate_limit
+POST_COMMENT_AUTH_RATE_LIMIT: Final[str] = app_settings.blog.post_comment_auth_rate_limit
+POST_COMMENT_ANONYMOUS_RATE_LIMIT: Final[str] = app_settings.blog.post_comment_anonymous_rate_limit
+
+# List-endpoint pagination defaults.
+POST_LIKES_LIST_DEFAULT_LIMIT: Final[int] = 50
+POST_COMMENTS_LIST_DEFAULT_LIMIT: Final[int] = 20

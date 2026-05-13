@@ -371,6 +371,55 @@ class BlogSettings(BaseModel):
         ),
     )
 
+    # Engagement — comment edit window + moderation sweeper.
+    post_comment_edit_window_seconds: int = Field(
+        default=15 * 60,
+        ge=60,
+        description=(
+            "Window (seconds since ``created_at``) during which an "
+            "authenticated author can edit their own comment. Anonymous "
+            "comments are never editable regardless of this value."
+        ),
+    )
+    post_comment_moderation_pending_ttl_seconds: int = Field(
+        default=30 * 24 * 3600,
+        ge=3600,
+        description=(
+            "TTL (seconds) for anonymous comments stuck in the moderation "
+            "queue. The leader-elected sweeper purges ``state='pending'`` "
+            "rows older than this. Default 30 days."
+        ),
+    )
+    post_comment_moderation_sweep_interval: float = Field(
+        default=3600.0,
+        ge=60.0,
+        description="Seconds between comment-moderation sweeper ticks (default hourly).",
+    )
+
+    # Engagement — rate-limit thresholds (slowapi-formatted strings).
+    post_like_rate_limit: str = Field(
+        default="60/minute",
+        description=(
+            "slowapi limit string for like / unlike requests, keyed per "
+            "authenticated user (FR-024a)."
+        ),
+    )
+    post_comment_auth_rate_limit: str = Field(
+        default="10/minute",
+        description=(
+            "slowapi limit string for authenticated comment submissions, "
+            "keyed per ``current_user.id`` (FR-024)."
+        ),
+    )
+    post_comment_anonymous_rate_limit: str = Field(
+        default="3/minute;30/day",
+        description=(
+            "slowapi compound limit string for anonymous comment "
+            "submissions, keyed per source IP (FR-024b). The per-day clamp "
+            "catches slow-drip spammers that the per-minute limit misses."
+        ),
+    )
+
 
 _DEFAULT_DEV_DB_PASSWORD = "postgres"  # noqa: S105 — sentinel value compared against, not a real password
 
