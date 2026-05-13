@@ -13,7 +13,7 @@ from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.auth.dependencies import get_current_user, get_current_user_optional
+from apps.auth.dependencies import get_current_user, get_current_user_or_anonymous
 from apps.blog.constants import (
     POST_COMMENT_ANONYMOUS_RATE_LIMIT,
     POST_COMMENT_AUTH_RATE_LIMIT,
@@ -99,7 +99,7 @@ async def get_published_post_by_slug(
     session: AsyncSession = Depends(session_factory),
     post_service: PostService = Depends(Provide[BlogContainer.post_service]),
     post_like_service: PostLikeService = Depends(Provide[BlogContainer.post_like_service]),
-    current_user: User | None = Depends(get_current_user_optional),
+    current_user: User | None = Depends(get_current_user_or_anonymous),
 ) -> APIResponse[PostDetailResponse]:
     """Fetch a published post by slug. 404s for any non-published row.
 
@@ -238,7 +238,7 @@ async def create_post_comment(
     post_id: uuid.UUID,
     payload: dict,
     workspace: Workspace = Depends(get_workspace_by_slug),
-    current_user: User | None = Depends(get_current_user_optional),
+    current_user: User | None = Depends(get_current_user_or_anonymous),
     session: AsyncSession = Depends(session_factory),
     post_comment_service: PostCommentService = Depends(
         Provide[BlogContainer.post_comment_service],
@@ -331,7 +331,7 @@ async def reply_to_post_comment(
     comment_id: uuid.UUID,
     payload: dict,
     workspace: Workspace = Depends(get_workspace_by_slug),
-    current_user: User | None = Depends(get_current_user_optional),
+    current_user: User | None = Depends(get_current_user_or_anonymous),
     session: AsyncSession = Depends(session_factory),
     post_comment_service: PostCommentService = Depends(
         Provide[BlogContainer.post_comment_service],

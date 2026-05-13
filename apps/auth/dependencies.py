@@ -35,7 +35,7 @@ async def get_current_user(
 
 
 @inject
-async def get_current_user_optional(
+async def get_current_user_or_anonymous(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     session: AsyncSession = Depends(session_factory),
     auth_service: AuthService = Depends(Provide[AuthContainer.auth_service]),

@@ -15,6 +15,7 @@ no untrusted markup can ever reach another reader's browser (SC-008).
 
 from __future__ import annotations
 
+import datetime
 import ipaddress
 import uuid
 from typing import TYPE_CHECKING
@@ -22,9 +23,13 @@ from typing import TYPE_CHECKING
 import nh3
 from loguru import logger
 
+from apps.blog.constants import POST_COMMENT_EDIT_WINDOW_SECONDS
 from apps.blog.enums import CommentAuthorKind, CommentState, PostStatus
 from apps.blog.exceptions import (
+    AnonymousAuthorImmutableError,
     AnonymousCommentsDisabledError,
+    CommentAuthorForbiddenError,
+    CommentEditWindowExpiredError,
     CommentNestingTooDeepError,
     CommentNotFoundError,
     PostEngagementClosedError,
@@ -36,6 +41,7 @@ from apps.blog.schemas import (
     CreateAuthenticatedCommentRequest,
     PostCommentAuthor,
     PostCommentResponse,
+    UpdateCommentRequest,
 )
 from apps.core.database.transactional import transactional
 from apps.core.schemas.response import PaginatedResponse
@@ -412,6 +418,110 @@ class PostCommentService:
             total=total,
             limit=limit,
             offset=offset,
+        )
+
+    @transactional
+    async def edit_own(
+        self,
+        session: SessionType,
+        *,
+        comment_id: uuid.UUID,
+        current_user_id: uuid.UUID,
+        data: UpdateCommentRequest,
+    ) -> PostCommentResponse:
+        """Author-only body edit within the configured window (FR-019).
+
+        Reject cases:
+
+        * unknown / soft-deleted row → ``CommentNotFoundError`` (404)
+        * anonymous-authored row → ``AnonymousAuthorImmutableError`` (403)
+        * non-author caller → ``CommentAuthorForbiddenError`` (403)
+        * created_at older than ``POST_COMMENT_EDIT_WINDOW_SECONDS`` →
+          ``CommentEditWindowExpiredError`` (403)
+
+        The trigger does NOT fire on body-only updates; counters stay
+        exact.
+        """
+        row = await self.repository.find_by_id(session, comment_id=comment_id)
+        if row is None or row.deleted_at is not None:
+            raise CommentNotFoundError(message="Comment not found.")
+        if row.author_user_id is None:
+            raise AnonymousAuthorImmutableError(message="Anonymous comments cannot be edited.")
+        if row.author_user_id != current_user_id:
+            raise CommentAuthorForbiddenError(message="Only the comment author can edit this comment.")
+
+        now = datetime.datetime.now(tz=datetime.UTC)
+        if (now - row.created_at).total_seconds() > POST_COMMENT_EDIT_WINDOW_SECONDS:
+            raise CommentEditWindowExpiredError(message="Edit window has expired.")
+
+        sanitized = _sanitize_comment_body(data.body)
+        updated = await self.repository.update_body(
+            session,
+            comment_id=comment_id,
+            body=sanitized,
+            edited_at=now,
+        )
+        logger.info(
+            "PostCommentService - edit_own - comment_id={comment_id} author_user_id={author_user_id}",
+            comment_id=comment_id,
+            author_user_id=current_user_id,
+        )
+        usernames = await self.repository.fetch_author_usernames(
+            session,
+            user_ids=[current_user_id],
+        )
+        author = PostCommentAuthor(
+            display_name=usernames.get(current_user_id, _DELETED_USER_DISPLAY),
+            user_id=current_user_id,
+            username=usernames.get(current_user_id),
+        )
+        return _row_to_response(updated, author=author, reply_count=0)
+
+    @transactional
+    async def delete_own(
+        self,
+        session: SessionType,
+        *,
+        comment_id: uuid.UUID,
+        current_user_id: uuid.UUID,
+    ) -> None:
+        """Author-only delete (FR-020).
+
+        Top-level rows with at least one approved live reply are
+        tombstoned (the reply thread must remain readable); everything
+        else (replies, and top-level rows without approved replies) is
+        hard-deleted. Anonymous rows are immutable.
+
+        The PG trigger handles the counter delta in both branches.
+        """
+        row = await self.repository.find_by_id(session, comment_id=comment_id)
+        if row is None or row.deleted_at is not None:
+            raise CommentNotFoundError(message="Comment not found.")
+        if row.author_user_id is None:
+            raise AnonymousAuthorImmutableError(message="Anonymous comments cannot be deleted by callers.")
+        if row.author_user_id != current_user_id:
+            raise CommentAuthorForbiddenError(message="Only the comment author can delete this comment.")
+
+        is_top_level = row.parent_comment_id is None
+        should_tombstone = is_top_level and await self.repository.has_approved_replies(
+            session,
+            parent_id=comment_id,
+        )
+        if should_tombstone:
+            await self.repository.tombstone(
+                session,
+                comment_id=comment_id,
+                deleted_at=datetime.datetime.now(tz=datetime.UTC),
+            )
+            logger.info(
+                "PostCommentService - delete_own - tombstoned comment_id={comment_id}",
+                comment_id=comment_id,
+            )
+            return
+        await self.repository.hard_delete(session, comment_id=comment_id)
+        logger.info(
+            "PostCommentService - delete_own - hard-deleted comment_id={comment_id}",
+            comment_id=comment_id,
         )
 
     async def _load_open_post(

@@ -30,6 +30,7 @@ from apps.blog.schemas import (
     ListPostsRequest,
     ListPostVersionsRequest,
     ListTagsRequest,
+    PostCommentResponse,
     PostDetailResponse,
     PostResponse,
     PostVersionDetailResponse,
@@ -38,10 +39,11 @@ from apps.blog.schemas import (
     RestoreVersionResult,
     TagResponse,
     UpdateCategoryRequest,
+    UpdateCommentRequest,
     UpdatePostRequest,
     UpdateTagRequest,
 )
-from apps.blog.services import CategoryService, PostService, PostVersionService, TagService
+from apps.blog.services import CategoryService, PostCommentService, PostService, PostVersionService, TagService
 from apps.core.database.session import session_factory
 from apps.core.rate_limit import limiter
 from apps.core.schemas.response import APIResponse, PaginatedResponse
@@ -598,4 +600,71 @@ def _build_post_detail(post: Post) -> PostDetailResponse:
         content_text=content.content_text if content is not None else "",
         category=CategoryResponse.model_validate(post.category) if post.category is not None else None,
         tags=[TagResponse.model_validate(tag) for tag in post.tags],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Self-edit / self-delete on own comments (US4, FR-019..FR-021)
+# ---------------------------------------------------------------------------
+
+
+@blog_admin_router.patch(
+    "/comments/{comment_id}",
+    response_model=APIResponse[PostCommentResponse],
+)
+@inject
+async def edit_own_comment(
+    comment_id: uuid.UUID,
+    data: UpdateCommentRequest,
+    workspace: Workspace = Depends(require_workspace_member()),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(session_factory),
+    post_comment_service: PostCommentService = Depends(
+        Provide[BlogContainer.post_comment_service],
+    ),
+) -> APIResponse[PostCommentResponse]:
+    """Author-only body edit within the configured window (FR-019).
+
+    The workspace gate is membership-only so a non-member can't probe
+    comment ids by id. Author-check is enforced in the service layer.
+    """
+    _ = workspace
+    updated = await post_comment_service.edit_own(
+        session,
+        comment_id=comment_id,
+        current_user_id=current_user.id,
+        data=data,
+    )
+    return APIResponse[PostCommentResponse].success(
+        data=updated,
+        message="Comment updated successfully.",
+    )
+
+
+@blog_admin_router.delete(
+    "/comments/{comment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+@inject
+async def delete_own_comment(
+    comment_id: uuid.UUID,
+    workspace: Workspace = Depends(require_workspace_member()),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(session_factory),
+    post_comment_service: PostCommentService = Depends(
+        Provide[BlogContainer.post_comment_service],
+    ),
+) -> None:
+    """Author-only delete (FR-020).
+
+    Top-level rows with at least one approved live reply are tombstoned
+    (body cleared, ``is_tombstoned=true``, ``deleted_at`` set); every
+    other case (replies, top-level without approved replies) is hard
+    deleted. Anonymous rows are immutable.
+    """
+    _ = workspace
+    await post_comment_service.delete_own(
+        session,
+        comment_id=comment_id,
+        current_user_id=current_user.id,
     )

@@ -328,6 +328,25 @@ class CreateAuthenticatedCommentRequest(RequestObjectSchema):
         return stripped
 
 
+class UpdateCommentRequest(RequestObjectSchema):
+    """Body shape for the self-edit endpoint (FR-019).
+
+    Same validator set as the authenticated create path so the edit
+    surface can't smuggle in a longer body or a whitespace-only string.
+    """
+
+    body: str = Field(..., min_length=1, max_length=4_000)
+
+    @field_validator("body")
+    @classmethod
+    def _strip_and_require_nonempty(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            msg = "Comment body must not be empty after trimming whitespace."
+            raise ValueError(msg)
+        return stripped
+
+
 class CreateAnonymousCommentRequest(RequestObjectSchema):
     """Body shape for an anonymous comment submission (FR-010a)."""
 

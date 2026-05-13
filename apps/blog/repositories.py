@@ -7,7 +7,7 @@ import uuid
 from collections.abc import Iterable
 from typing import Any
 
-from sqlalchemy import and_, delete, exists, func, insert, select
+from sqlalchemy import and_, delete, exists, func, insert, select, update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
@@ -815,6 +815,103 @@ class PostCommentRepository(BaseSQLAlchemyRepository[PostComment]):
             return None
         return row.post_id, row.parent_comment_id, row.state, row.deleted_at
 
+    async def find_by_id(
+        self,
+        session: SessionType,
+        *,
+        comment_id: uuid.UUID,
+    ) -> PostComment | None:
+        """Fetch a comment row by id including soft-deleted rows.
+
+        Self-edit / self-delete decisions need to inspect ``deleted_at``
+        and ``is_tombstoned`` before deciding what to surface, so this
+        helper deliberately does NOT filter on the soft-delete predicate.
+        """
+        stmt = select(PostComment).where(PostComment.id == comment_id)
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def update_body(
+        self,
+        session: SessionType,
+        *,
+        comment_id: uuid.UUID,
+        body: str,
+        edited_at: datetime.datetime,
+    ) -> PostComment:
+        """Update body + edited_at on an existing comment row.
+
+        Returns the post-update row in a single round-trip via ``RETURNING``.
+        Trigger fires on the state column only, so editing the body never
+        moves the counter — by design.
+        """
+        stmt = (
+            sa_update(PostComment)
+            .where(PostComment.id == comment_id)
+            .values(body=body, edited_at=edited_at)
+            .returning(PostComment)
+        )
+        return (await session.execute(stmt)).scalar_one()
+
+    async def has_approved_replies(
+        self,
+        session: SessionType,
+        *,
+        parent_id: uuid.UUID,
+    ) -> bool:
+        """Whether the comment has at least one approved + live reply.
+
+        Drives the tombstone-vs-hard-delete decision in :meth:`delete_own`:
+        approved replies must remain readable to preserve the thread, so
+        the parent is tombstoned rather than removed.
+        """
+        stmt = select(
+            exists().where(
+                (PostComment.parent_comment_id == parent_id)
+                & (PostComment.state == "approved")
+                & PostComment.deleted_at.is_(None),
+            ),
+        )
+        return bool((await session.execute(stmt)).scalar_one())
+
+    async def tombstone(
+        self,
+        session: SessionType,
+        *,
+        comment_id: uuid.UUID,
+        deleted_at: datetime.datetime,
+    ) -> PostComment:
+        """Soft-delete by clearing the body and stamping deleted_at + tombstone flag.
+
+        The PG trigger on UPDATE drops ``posts.comment_count`` by 1
+        because the row's ``state = approved`` no longer satisfies the
+        ``deleted_at IS NULL`` half of the contribution predicate.
+        """
+        stmt = (
+            sa_update(PostComment)
+            .where(PostComment.id == comment_id)
+            .values(
+                deleted_at=deleted_at,
+                is_tombstoned=True,
+                body="[deleted]",
+            )
+            .returning(PostComment)
+        )
+        return (await session.execute(stmt)).scalar_one()
+
+    async def hard_delete(
+        self,
+        session: SessionType,
+        *,
+        comment_id: uuid.UUID,
+    ) -> None:
+        """Hard-delete the comment row.
+
+        FK cascade removes any reply rows (including pending ones); the
+        DELETE trigger drops ``posts.comment_count`` by 1 iff the row was
+        contributing at delete-time.
+        """
+        await session.execute(delete(PostComment).where(PostComment.id == comment_id))
+
     async def list_replies_approved(
         self,
         session: SessionType,
@@ -842,11 +939,7 @@ class PostCommentRepository(BaseSQLAlchemyRepository[PostComment]):
         ).scalar_one()
 
         page_stmt = (
-            select(PostComment)
-            .where(base_predicate)
-            .order_by(PostComment.created_at.asc())
-            .limit(limit)
-            .offset(offset)
+            select(PostComment).where(base_predicate).order_by(PostComment.created_at.asc()).limit(limit).offset(offset)
         )
         rows = list((await session.execute(page_stmt)).scalars().all())
         return rows, int(total)
