@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import and_, delete, exists, func, insert, select, update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from apps.blog.constants import POST_VERSION_INSERT_RETRY_LIMIT
 from apps.blog.enums import PostStatus
@@ -743,6 +743,35 @@ class PostLikeRepository(BaseSQLAlchemyRepository[PostLike]):
         """Return the authoritative like count for ``post_id`` (FR-026)."""
         stmt = select(func.count()).select_from(PostLike).where(PostLike.post_id == post_id)
         return int((await session.execute(stmt)).scalar_one())
+
+    async def list_likers(
+        self,
+        session: SessionType,
+        *,
+        post_id: uuid.UUID,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[PostLike], int]:
+        """Return ``(rows, total)`` for the "Liked by" list (US6 / FR-009).
+
+        Page rows are ordered newest-first by ``created_at`` (uses the
+        partial DESC index ``ix_post_likes_post_id_created_at_desc``).
+        ``PostLike.user`` is eager-loaded via :func:`joinedload` so the
+        downstream response builder can read ``user.username`` without
+        triggering a per-row SELECT (data-model §1 / no N+1).
+        """
+        page_stmt = (
+            select(PostLike)
+            .options(joinedload(PostLike.user))
+            .where(PostLike.post_id == post_id)
+            .order_by(PostLike.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        rows = list((await session.execute(page_stmt)).scalars().unique().all())
+        total_stmt = select(func.count()).select_from(PostLike).where(PostLike.post_id == post_id)
+        total = int((await session.execute(total_stmt)).scalar_one())
+        return rows, total
 
 
 class PostCommentRepository(BaseSQLAlchemyRepository[PostComment]):

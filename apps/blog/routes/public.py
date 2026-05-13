@@ -19,6 +19,7 @@ from apps.blog.constants import (
     POST_COMMENT_AUTH_RATE_LIMIT,
     POST_COMMENTS_LIST_DEFAULT_LIMIT,
     POST_LIKE_RATE_LIMIT,
+    POST_LIKES_LIST_DEFAULT_LIMIT,
 )
 from apps.blog.containers import BlogContainer
 from apps.blog.enums import PostStatus
@@ -30,9 +31,11 @@ from apps.blog.schemas import (
     CategoryResponse,
     CreateAnonymousCommentRequest,
     CreateAuthenticatedCommentRequest,
+    LikerResponse,
     LikeState,
     ListCategoriesRequest,
     ListCommentsRequest,
+    ListLikersRequest,
     ListPostsRequest,
     ListTagsRequest,
     PostCommentResponse,
@@ -184,6 +187,40 @@ async def unlike_post(
     return APIResponse[LikeState].success(
         data=state,
         message="Like removed.",
+    )
+
+
+@blog_public_router.get(
+    "/posts/{post_id}/likers",
+    response_model=APIResponse[PaginatedResponse[LikerResponse]],
+)
+@inject
+async def list_post_likers(
+    post_id: uuid.UUID,
+    params: ListLikersRequest = Depends(),
+    workspace: Workspace = Depends(get_workspace_by_slug),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(session_factory),
+    post_like_service: PostLikeService = Depends(Provide[BlogContainer.post_like_service]),
+) -> APIResponse[PaginatedResponse[LikerResponse]]:
+    """Paginated, newest-first list of users who liked the post (US6 / FR-009).
+
+    Authenticated callers only — anonymous traffic can only see the
+    aggregate ``like_count`` on :class:`PostDetailResponse`. Cross-
+    workspace and soft-deleted-post requests surface as 404 (same shape
+    as not-found) per FR-027.
+    """
+    _ = current_user  # gate-only — service does not need the user identity
+    page = await post_like_service.list_likers(
+        session,
+        workspace_id=workspace.id,
+        post_id=post_id,
+        limit=params.limit or POST_LIKES_LIST_DEFAULT_LIMIT,
+        offset=params.offset,
+    )
+    return APIResponse[PaginatedResponse[LikerResponse]].success(
+        data=page,
+        message="Likers retrieved successfully.",
     )
 
 

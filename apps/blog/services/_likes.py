@@ -19,8 +19,9 @@ from loguru import logger
 from apps.blog.enums import PostStatus
 from apps.blog.exceptions import PostEngagementClosedError, PostNotFoundError
 from apps.blog.repositories import PostLikeRepository, PostRepository
-from apps.blog.schemas import LikeState
+from apps.blog.schemas import LikerResponse, LikeState
 from apps.core.database.transactional import transactional
+from apps.core.schemas.response import PaginatedResponse
 
 if TYPE_CHECKING:
     from apps.blog.models import Post
@@ -162,4 +163,50 @@ class PostLikeService:
             session,
             post_id=post_id,
             user_id=user_id,
+        )
+
+    async def list_likers(
+        self,
+        session: SessionType,
+        *,
+        workspace_id: uuid.UUID,
+        post_id: uuid.UUID,
+        limit: int,
+        offset: int,
+    ) -> PaginatedResponse[LikerResponse]:
+        """Paginated newest-first list of users who liked ``post_id`` (US6).
+
+        Cross-workspace and soft-deleted requests surface as
+        :class:`PostNotFoundError` (404 mask per FR-027); archived posts
+        remain readable because this endpoint is a read path
+        (FR-008 / FR-015 reject mutations only).
+        """
+        post = await self.post_repository.find_by_id(
+            session,
+            workspace_id=workspace_id,
+            post_id=post_id,
+            include_deleted=False,
+            load_content=False,
+        )
+        if post is None:
+            raise PostNotFoundError(message="Post not found.")
+        rows, total = await self.repository.list_likers(
+            session,
+            post_id=post.id,
+            limit=limit,
+            offset=offset,
+        )
+        items = [
+            LikerResponse(
+                user_id=row.user.id,
+                username=row.user.username,
+                liked_at=row.created_at,
+            )
+            for row in rows
+        ]
+        return PaginatedResponse[LikerResponse](
+            items=items,
+            total=total,
+            limit=limit,
+            offset=offset,
         )

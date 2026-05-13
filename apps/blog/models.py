@@ -12,7 +12,10 @@ from __future__ import annotations
 import datetime
 import ipaddress
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from apps.user.models import User
 
 from sqlalchemy.dialects.postgresql import BYTEA, INET, JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -403,6 +406,10 @@ class PostLike(UUIDAuditBase):
     post: Mapped[Post] = relationship(
         "Post",
         back_populates="likes",
+        lazy="raise",
+    )
+    user: Mapped[User] = relationship(
+        "User",
         lazy="raise",
     )
 
