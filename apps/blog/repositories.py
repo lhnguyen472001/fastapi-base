@@ -685,12 +685,111 @@ class PostLikeRepository(BaseSQLAlchemyRepository[PostLike]):
 class PostCommentRepository(BaseSQLAlchemyRepository[PostComment]):
     """Data access for :class:`PostComment` from the comment-author surface.
 
-    Method bodies for create / list / replies / edit / self-delete land
-    in Phases 4-6 of specs/003-post-likes-comments. Phase 2 ships an
-    empty subclass so the container can wire it.
+    Mutations route through :meth:`insert` (auth + anon); reads go through
+    :meth:`list_top_level_approved` + :meth:`count_replies` +
+    :meth:`fetch_author_usernames` (all batched, no N+1). Moderator-only
+    queries live on :class:`PostCommentModerationRepository`.
     """
 
     model_type = PostComment
+
+    async def insert(
+        self,
+        session: SessionType,
+        *,
+        data: dict[str, Any],
+    ) -> PostComment:
+        """Insert a comment row with the given column dict.
+
+        Returns the persisted instance. The caller supplies all required
+        columns; this method never assigns ``state`` or ``deleted_at`` —
+        defaults come from the model.
+        """
+        row = PostComment(**data)
+        session.add(row)
+        await session.flush()
+        await session.refresh(row)
+        return row
+
+    async def list_top_level_approved(
+        self,
+        session: SessionType,
+        *,
+        post_id: uuid.UUID,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[PostComment], int]:
+        """Paginated newest-first list of approved top-level comments.
+
+        Uses the ``ix_post_comments_post_top_level_recent`` partial
+        index; returns the page + the total count for the same filter.
+        """
+        base_predicate = (
+            (PostComment.post_id == post_id)
+            & (PostComment.state == "approved")
+            & PostComment.deleted_at.is_(None)
+            & PostComment.parent_comment_id.is_(None)
+        )
+
+        total = (
+            await session.execute(
+                select(func.count()).select_from(PostComment).where(base_predicate),
+            )
+        ).scalar_one()
+
+        page_stmt = (
+            select(PostComment)
+            .where(base_predicate)
+            .order_by(PostComment.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        rows = list((await session.execute(page_stmt)).scalars().all())
+        return rows, int(total)
+
+    async def count_replies(
+        self,
+        session: SessionType,
+        *,
+        parent_ids: list[uuid.UUID],
+    ) -> dict[uuid.UUID, int]:
+        """Batched ``COUNT(*)`` of approved replies grouped by parent.
+
+        Returns ``{parent_id: count}`` covering only those parents that
+        have at least one approved live reply; absent keys mean zero.
+        """
+        if not parent_ids:
+            return {}
+        stmt = (
+            select(PostComment.parent_comment_id, func.count())
+            .where(
+                PostComment.parent_comment_id.in_(parent_ids),
+                PostComment.state == "approved",
+                PostComment.deleted_at.is_(None),
+            )
+            .group_by(PostComment.parent_comment_id)
+        )
+        rows = (await session.execute(stmt)).all()
+        return {row[0]: int(row[1]) for row in rows}
+
+    async def fetch_author_usernames(
+        self,
+        session: SessionType,
+        *,
+        user_ids: list[uuid.UUID],
+    ) -> dict[uuid.UUID, str]:
+        """Fetch ``{user_id: username}`` for a page of authenticated authors.
+
+        One ``IN (...)`` SELECT instead of an N+1 navigation; absent ids
+        mean the user row is gone (sentinel retarget already fired).
+        """
+        if not user_ids:
+            return {}
+        from apps.user.models import User  # noqa: PLC0415 — runtime FK target
+
+        stmt = select(User.id, User.username).where(User.id.in_(user_ids))
+        rows = (await session.execute(stmt)).all()
+        return {row[0]: row[1] for row in rows}
 
 
 class PostCommentModerationRepository(BaseSQLAlchemyRepository[PostComment]):

@@ -14,21 +14,39 @@ from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.auth.dependencies import get_current_user, get_current_user_optional
-from apps.blog.constants import POST_LIKE_RATE_LIMIT
+from apps.blog.constants import (
+    POST_COMMENT_ANONYMOUS_RATE_LIMIT,
+    POST_COMMENT_AUTH_RATE_LIMIT,
+    POST_COMMENTS_LIST_DEFAULT_LIMIT,
+    POST_LIKE_RATE_LIMIT,
+)
 from apps.blog.containers import BlogContainer
 from apps.blog.enums import PostStatus
-from apps.blog.routes._engagement_rate_keys import auth_user_key
+from apps.blog.routes._engagement_rate_keys import (
+    anonymous_ip_key,
+    auth_user_key,
+)
 from apps.blog.schemas import (
     CategoryResponse,
+    CreateAnonymousCommentRequest,
+    CreateAuthenticatedCommentRequest,
     LikeState,
     ListCategoriesRequest,
+    ListCommentsRequest,
     ListPostsRequest,
     ListTagsRequest,
+    PostCommentResponse,
     PostDetailResponse,
     PostResponse,
     TagResponse,
 )
-from apps.blog.services import CategoryService, PostLikeService, PostService, TagService
+from apps.blog.services import (
+    CategoryService,
+    PostCommentService,
+    PostLikeService,
+    PostService,
+    TagService,
+)
 from apps.core.database.session import session_factory
 from apps.core.rate_limit import limiter
 from apps.core.schemas.response import APIResponse, PaginatedResponse
@@ -166,6 +184,99 @@ async def unlike_post(
     return APIResponse[LikeState].success(
         data=state,
         message="Like removed.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Engagement — comments (US2, FR-010..FR-017)
+# ---------------------------------------------------------------------------
+
+
+@blog_public_router.get(
+    "/posts/{post_id}/comments",
+    response_model=APIResponse[PaginatedResponse[PostCommentResponse]],
+)
+@inject
+async def list_post_comments(
+    post_id: uuid.UUID,
+    params: ListCommentsRequest = Depends(),
+    workspace: Workspace = Depends(get_workspace_by_slug),
+    session: AsyncSession = Depends(session_factory),
+    post_comment_service: PostCommentService = Depends(
+        Provide[BlogContainer.post_comment_service],
+    ),
+) -> APIResponse[PaginatedResponse[PostCommentResponse]]:
+    """Paginated, newest-first top-level approved comments (FR-017).
+
+    Anonymous + pending + rejected + tombstoned bodies are excluded from
+    the public list. Authentication is optional; the response shape is
+    identical for both authenticated and anonymous callers.
+    """
+    page = await post_comment_service.list_top_level(
+        session,
+        workspace_id=workspace.id,
+        post_id=post_id,
+        limit=params.limit or POST_COMMENTS_LIST_DEFAULT_LIMIT,
+        offset=params.offset,
+    )
+    return APIResponse[PaginatedResponse[PostCommentResponse]].success(
+        data=page,
+        message="Comments retrieved successfully.",
+    )
+
+
+@blog_public_router.post(
+    "/posts/{post_id}/comments",
+    response_model=APIResponse[PostCommentResponse],
+    status_code=status.HTTP_201_CREATED,
+)
+@limiter.limit(POST_COMMENT_AUTH_RATE_LIMIT, key_func=auth_user_key)
+@limiter.limit(POST_COMMENT_ANONYMOUS_RATE_LIMIT, key_func=anonymous_ip_key)
+@inject
+async def create_post_comment(
+    request: Request,
+    post_id: uuid.UUID,
+    payload: dict,
+    workspace: Workspace = Depends(get_workspace_by_slug),
+    current_user: User | None = Depends(get_current_user_optional),
+    session: AsyncSession = Depends(session_factory),
+    post_comment_service: PostCommentService = Depends(
+        Provide[BlogContainer.post_comment_service],
+    ),
+) -> APIResponse[PostCommentResponse]:
+    """Create a top-level comment (FR-010 + FR-010a/b/c).
+
+    Dispatches on the presence of an authenticated caller: authenticated
+    bodies use :class:`CreateAuthenticatedCommentRequest`; anonymous
+    bodies use :class:`CreateAnonymousCommentRequest`. Both rate-limit
+    chains run per request (the unused chain is effectively free).
+    """
+    if current_user is not None:
+        auth_req = CreateAuthenticatedCommentRequest.model_validate(payload)
+        comment = await post_comment_service.create_authenticated(
+            session,
+            workspace_id=workspace.id,
+            post_id=post_id,
+            author_user_id=current_user.id,
+            data=auth_req,
+        )
+        return APIResponse[PostCommentResponse].success(
+            data=comment,
+            message="Comment created.",
+        )
+
+    anon_req = CreateAnonymousCommentRequest.model_validate(payload)
+    source_ip = request.client.host if request.client else None
+    comment = await post_comment_service.create_anonymous(
+        session,
+        workspace=workspace,
+        post_id=post_id,
+        data=anon_req,
+        source_ip=source_ip,
+    )
+    return APIResponse[PostCommentResponse].success(
+        data=comment,
+        message="Comment created.",
     )
 
 

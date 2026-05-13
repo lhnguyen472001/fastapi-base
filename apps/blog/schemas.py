@@ -307,6 +307,102 @@ class LikerResponse(ResponseObjectSchema):
 class ListLikersRequest(OffsetPaginationRequestSchema):
     """Query params for the likers list."""
 
+
+# ---------------------------------------------------------------------------
+# Engagement (comments) schemas
+# ---------------------------------------------------------------------------
+
+
+class CreateAuthenticatedCommentRequest(RequestObjectSchema):
+    """Body shape for an authenticated comment submission (FR-010 auth path)."""
+
+    body: str = Field(..., min_length=1, max_length=4_000)
+
+    @field_validator("body")
+    @classmethod
+    def _strip_and_require_nonempty(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            msg = "Comment body must not be empty after trimming whitespace."
+            raise ValueError(msg)
+        return stripped
+
+
+class CreateAnonymousCommentRequest(RequestObjectSchema):
+    """Body shape for an anonymous comment submission (FR-010a)."""
+
+    body: str = Field(..., min_length=1, max_length=4_000)
+    author_display_name: str = Field(..., min_length=1, max_length=80)
+    author_email: str | None = Field(default=None, max_length=254)
+
+    @field_validator("body")
+    @classmethod
+    def _strip_and_require_body(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            msg = "Comment body must not be empty after trimming whitespace."
+            raise ValueError(msg)
+        return stripped
+
+    @field_validator("author_display_name")
+    @classmethod
+    def _strip_display_name(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            msg = "Display name must not be empty after trimming whitespace."
+            raise ValueError(msg)
+        return stripped
+
+    @field_validator("author_email")
+    @classmethod
+    def _validate_email_shape(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        v = value.strip()
+        if not v:
+            return None
+        if "@" not in v or v.startswith("@") or v.endswith("@") or " " in v:
+            msg = "author_email is not a syntactically valid email."
+            raise ValueError(msg)
+        return v
+
+
+class PostCommentAuthor(ResponseObjectSchema):
+    """Public-safe author summary on a comment response.
+
+    ``user_id`` and ``username`` are populated for authenticated authorship;
+    ``display_name`` is populated for both (derived from the joined user
+    record OR from the anonymous row's ``author_display_name``). Never
+    includes ``author_email``.
+    """
+
+    display_name: str
+    user_id: uuid.UUID | None = None
+    username: str | None = None
+
+
+class PostCommentResponse(ResponseObjectSchema):
+    """Public-safe comment representation (FR-017 + tombstone semantics).
+
+    ``body`` is omitted when ``is_tombstoned`` is true — the row is kept
+    for thread structure but its content is hidden from public listings.
+    """
+
+    id: uuid.UUID
+    post_id: uuid.UUID
+    parent_comment_id: uuid.UUID | None
+    author_kind: str  # apps.blog.enums.CommentAuthorKind value
+    author: PostCommentAuthor
+    body: str | None
+    edited_at: datetime.datetime | None
+    created_at: datetime.datetime
+    is_tombstoned: bool
+    reply_count: int = 0
+
+
+class ListCommentsRequest(OffsetPaginationRequestSchema):
+    """Query params for the top-level comment list."""
+
     reading_minutes: int
     updated_at: datetime.datetime
     persisted: bool
