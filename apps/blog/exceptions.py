@@ -7,7 +7,7 @@ import enum
 from fastapi import status as http_status
 
 from apps.core.exceptions.base import BackendError
-from apps.core.exceptions.errors import BadRequestError, ConflictError, NotFoundError
+from apps.core.exceptions.errors import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 
 
 class BlogErrorCodes(enum.StrEnum):
@@ -200,3 +200,152 @@ class PostVersionDiffTooLargeError(BackendError):
 
     def __init__(self, *, message: str = "Combined version content exceeds the diff size limit.") -> None:
         super().__init__(message=message)
+
+
+# ---------------------------------------------------------------------------
+# Engagement (post_likes + post_comments) error codes + classes
+# ---------------------------------------------------------------------------
+
+
+class PostEngagementErrorCodes(enum.StrEnum):
+    """Stable error codes for the post engagement (likes + comments) surface."""
+
+    ENG001 = "ENG001"  # Post is not eligible for engagement (soft-deleted / archived)
+    ENG002 = "ENG002"  # Anonymous comments disabled on this workspace
+    ENG003 = "ENG003"  # Comment not found (or not visible to caller)
+    ENG004 = "ENG004"  # Comment body fails validation (length, whitespace-only)
+    ENG005 = "ENG005"  # Reply nesting exceeds depth 1
+    ENG006 = "ENG006"  # Reply parent belongs to a different post
+    ENG007 = "ENG007"  # Edit attempted after the edit window expired
+    ENG008 = "ENG008"  # Caller is not the author of the comment
+    ENG009 = "ENG009"  # Anonymous-authored comment is not editable/self-deletable
+    ENG010 = "ENG010"  # Moderation action targets a comment not in 'pending' state
+
+
+class PostEngagementClosedError(ConflictError):
+    """Raised when a like/comment mutation targets a post that is no
+    longer open for engagement (soft-deleted or archived). FR-008 / FR-015.
+    """
+
+    code: str = PostEngagementErrorCodes.ENG001
+
+    def __init__(self, *, message: str = "Post is not accepting engagement.") -> None:
+        super().__init__(code=self.code, message=message)
+
+
+class AnonymousCommentsDisabledError(NotFoundError):
+    """Raised when an anonymous comment is submitted to a workspace whose
+    ``allow_anonymous_comments`` flag is OFF. Surfaces as 404 — same shape
+    as a not-found — to avoid leaking whether the flag is on or off
+    (FR-010b).
+    """
+
+    code: str = PostEngagementErrorCodes.ENG002
+
+    def __init__(self, *, message: str = "Post not found.") -> None:
+        super().__init__(code=self.code, message=message)
+
+
+class CommentNotFoundError(NotFoundError):
+    """Raised when a comment cannot be located, or when the caller is not
+    authorized to see the comment (cross-workspace masking)."""
+
+    code: str = PostEngagementErrorCodes.ENG003
+
+    def __init__(self, *, message: str = "Comment not found.") -> None:
+        super().__init__(code=self.code, message=message)
+
+
+class CommentBodyInvalidError(BadRequestError):
+    """Raised when a comment body fails validation (empty after trim,
+    whitespace-only, or exceeds the max-length limit). FR-011."""
+
+    code: str = PostEngagementErrorCodes.ENG004
+
+    def __init__(self, *, message: str = "Comment body is invalid.") -> None:
+        super().__init__(code=self.code, message=message)
+
+
+class CommentNestingTooDeepError(BadRequestError):
+    """Raised when a reply attempts to nest beneath another reply
+    (depth > 1). FR-013."""
+
+    code: str = PostEngagementErrorCodes.ENG005
+
+    def __init__(
+        self,
+        *,
+        message: str = "Replies cannot be nested more than one level deep.",
+    ) -> None:
+        super().__init__(code=self.code, message=message)
+
+
+class CommentParentPostMismatchError(BadRequestError):
+    """Raised when a reply's parent comment belongs to a different post
+    than the path's post_id. FR-014."""
+
+    code: str = PostEngagementErrorCodes.ENG006
+
+    def __init__(
+        self,
+        *,
+        message: str = "Reply parent does not belong to this post.",
+    ) -> None:
+        super().__init__(code=self.code, message=message)
+
+
+class CommentEditWindowExpiredError(ForbiddenError):
+    """Raised when the author attempts to edit their comment after the
+    configured window has passed (default 15 minutes). FR-019."""
+
+    code: str = PostEngagementErrorCodes.ENG007
+
+    def __init__(
+        self,
+        *,
+        message: str = "Edit window has expired for this comment.",
+    ) -> None:
+        super().__init__(code=self.code, message=message)
+
+
+class CommentAuthorForbiddenError(ForbiddenError):
+    """Raised when a caller attempts to edit or self-delete a comment
+    they did not author. FR-021."""
+
+    code: str = PostEngagementErrorCodes.ENG008
+
+    def __init__(
+        self,
+        *,
+        message: str = "You may only edit or delete your own comment.",
+    ) -> None:
+        super().__init__(code=self.code, message=message)
+
+
+class AnonymousAuthorImmutableError(ForbiddenError):
+    """Raised when any caller attempts to edit or self-delete an
+    anonymous-authored comment. Anonymous comments have no platform
+    identity that can authenticate a self-edit (Q5 round 1)."""
+
+    code: str = PostEngagementErrorCodes.ENG009
+
+    def __init__(
+        self,
+        *,
+        message: str = "Anonymous comments cannot be edited or self-deleted.",
+    ) -> None:
+        super().__init__(code=self.code, message=message)
+
+
+class CommentNotPendingError(ConflictError):
+    """Raised when a moderator approval / rejection action targets a
+    comment that is not in the ``pending`` state. FR-010d."""
+
+    code: str = PostEngagementErrorCodes.ENG010
+
+    def __init__(
+        self,
+        *,
+        message: str = "Moderation action requires a pending comment.",
+    ) -> None:
+        super().__init__(code=self.code, message=message)

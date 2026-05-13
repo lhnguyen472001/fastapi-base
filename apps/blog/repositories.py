@@ -13,7 +13,16 @@ from sqlalchemy.orm import selectinload
 from apps.blog.constants import POST_VERSION_INSERT_RETRY_LIMIT
 from apps.blog.enums import PostStatus
 from apps.blog.exceptions import PostVersionConflictError
-from apps.blog.models import Category, Post, PostContent, PostTag, PostVersion, Tag
+from apps.blog.models import (
+    Category,
+    Post,
+    PostComment,
+    PostContent,
+    PostLike,
+    PostTag,
+    PostVersion,
+    Tag,
+)
 from apps.blog.store import PostAutosaveState
 from apps.core.database.repository import BaseSQLAlchemyRepository
 from apps.core.database.types import SessionType
@@ -528,3 +537,41 @@ class PostVersionRepository(BaseSQLAlchemyRepository[PostVersion]):
             .order_by(order)
         )
         return list((await session.execute(stmt)).scalars().all())
+
+
+# ---------------------------------------------------------------------------
+# Engagement (post likes + post comments)
+# ---------------------------------------------------------------------------
+
+
+class PostLikeRepository(BaseSQLAlchemyRepository[PostLike]):
+    """Data access for :class:`PostLike`.
+
+    Method bodies land in Phase 3 (US1) of specs/003-post-likes-comments.
+    Phase 2 ships an empty subclass so the container can wire it.
+    """
+
+    model_type = PostLike
+
+
+class PostCommentRepository(BaseSQLAlchemyRepository[PostComment]):
+    """Data access for :class:`PostComment` from the comment-author surface.
+
+    Method bodies for create / list / replies / edit / self-delete land
+    in Phases 4-6 of specs/003-post-likes-comments. Phase 2 ships an
+    empty subclass so the container can wire it.
+    """
+
+    model_type = PostComment
+
+
+class PostCommentModerationRepository(BaseSQLAlchemyRepository[PostComment]):
+    """Data access for :class:`PostComment` from the moderator surface.
+
+    Distinct from :class:`PostCommentRepository` so the moderator-only
+    queries (pending list, transition_state, mark_moderator_deleted)
+    live next to each other. Method bodies land in Phase 7 of
+    specs/003-post-likes-comments.
+    """
+
+    model_type = PostComment

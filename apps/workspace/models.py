@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql.schema import ForeignKey, Index, UniqueConstraint
-from sqlalchemy.sql.sqltypes import String, Text
+from sqlalchemy.sql.sqltypes import Boolean, String, Text
 
 from apps.core.database.model.base import UUIDAuditBase
 from apps.core.database.model.mixins import HasSoftDeletedMixin
@@ -49,6 +49,17 @@ class Workspace(UUIDAuditBase, HasSoftDeletedMixin):
     owner_user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"),
         nullable=False,
+    )
+
+    # Gate for anonymous (unauthenticated) comment submissions on this
+    # workspace's published posts (FR-010b). Default OFF: workspaces accept
+    # only authenticated comments until an owner explicitly opts in. Toggling
+    # this flag does not retroactively affect rows already in moderation.
+    allow_anonymous_comments: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
     )
 
     members: Mapped[list[WorkspaceMember]] = relationship(

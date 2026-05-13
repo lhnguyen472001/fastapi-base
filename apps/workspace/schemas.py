@@ -50,6 +50,13 @@ class UpdateWorkspaceRequest(RequestObjectSchema):
 
     name: str | None = Field(default=None, min_length=1, max_length=WORKSPACE_NAME_MAX_LENGTH)
     description: str | None = Field(default=None, max_length=WORKSPACE_DESCRIPTION_MAX_LENGTH)
+    allow_anonymous_comments: bool | None = Field(
+        default=None,
+        description=(
+            "Owner-only gate for anonymous (unauthenticated) comment submissions on "
+            "this workspace's published posts. Default OFF on creation."
+        ),
+    )
 
 
 class ListWorkspacesRequest(OffsetPaginationRequestSchema):
@@ -66,6 +73,7 @@ class WorkspaceResponse(ResponseObjectSchema):
     name: str
     description: str | None
     owner_user_id: uuid.UUID
+    allow_anonymous_comments: bool
     created_at: datetime.datetime
     updated_at: datetime.datetime
 

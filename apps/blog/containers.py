@@ -6,13 +6,24 @@ from dependency_injector import containers, providers
 
 from apps.blog.repositories import (
     CategoryRepository,
+    PostCommentModerationRepository,
+    PostCommentRepository,
     PostContentRepository,
+    PostLikeRepository,
     PostRepository,
     PostTagRepository,
     PostVersionRepository,
     TagRepository,
 )
-from apps.blog.services import CategoryService, PostService, PostVersionService, TagService
+from apps.blog.services import (
+    CategoryService,
+    PostCommentModerationService,
+    PostCommentService,
+    PostLikeService,
+    PostService,
+    PostVersionService,
+    TagService,
+)
 from apps.blog.store import AutosaveStore
 from apps.core.redis import CacheManager, get_redis_client
 
@@ -71,4 +82,27 @@ class BlogContainer(containers.DeclarativeContainer):
         post_repository=post_repository,
         post_content_repository=post_content_repository,
         user_repository=user_repository,
+    )
+
+    # Engagement — likes + comments + moderation. Phase 2 wires empty
+    # service skeletons (see apps/blog/services/_likes.py etc.); method
+    # bodies land in Phases 3-7 of specs/003-post-likes-comments.
+    post_like_repository = providers.Factory(PostLikeRepository)
+    post_comment_repository = providers.Factory(PostCommentRepository)
+    post_comment_moderation_repository = providers.Factory(PostCommentModerationRepository)
+
+    post_like_service = providers.Factory(
+        PostLikeService,
+        repository=post_like_repository,
+        post_repository=post_repository,
+    )
+    post_comment_service = providers.Factory(
+        PostCommentService,
+        repository=post_comment_repository,
+        post_repository=post_repository,
+    )
+    post_comment_moderation_service = providers.Factory(
+        PostCommentModerationService,
+        repository=post_comment_moderation_repository,
+        post_repository=post_repository,
     )

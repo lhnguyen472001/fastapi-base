@@ -10,10 +10,11 @@ attached in the Phase 4 / 4.5 migrations.
 from __future__ import annotations
 
 import datetime
+import ipaddress
 import uuid
 from typing import Any
 
-from sqlalchemy.dialects.postgresql import BYTEA, JSONB, TSVECTOR
+from sqlalchemy.dialects.postgresql import BYTEA, INET, JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql.schema import (
     CheckConstraint,
@@ -27,6 +28,9 @@ from apps.blog.constants import (
     CATEGORY_NAME_MAX_LENGTH,
     CATEGORY_SLUG_MAX_LENGTH,
     EMPTY_TIPTAP_DOC,
+    POST_COMMENT_ANONYMOUS_DISPLAY_NAME_MAX_LENGTH,
+    POST_COMMENT_ANONYMOUS_EMAIL_MAX_LENGTH,
+    POST_COMMENT_BODY_MAX_LENGTH,
     POST_COVER_IMAGE_URL_MAX_LENGTH,
     POST_META_DESCRIPTION_MAX_LENGTH,
     POST_META_TITLE_MAX_LENGTH,
@@ -35,7 +39,7 @@ from apps.blog.constants import (
     TAG_NAME_MAX_LENGTH,
     TAG_SLUG_MAX_LENGTH,
 )
-from apps.blog.enums import PostStatus
+from apps.blog.enums import CommentState, PostStatus
 from apps.core.database.model.base import UUIDAuditBase
 from apps.core.database.model.mixins import HasSoftDeletedMixin
 from apps.core.database.types import DateTimeUTC
@@ -230,6 +234,18 @@ class Post(UUIDAuditBase, HasSoftDeletedMixin):
         cascade="all, delete-orphan",
         lazy="raise",
     )
+    likes: Mapped[list[PostLike]] = relationship(
+        "PostLike",
+        back_populates="post",
+        cascade="all, delete-orphan",
+        lazy="raise",
+    )
+    comments: Mapped[list[PostComment]] = relationship(
+        "PostComment",
+        back_populates="post",
+        cascade="all, delete-orphan",
+        lazy="raise",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -338,5 +354,217 @@ class PostVersion(UUIDAuditBase):
     post: Mapped[Post] = relationship(
         "Post",
         back_populates="versions",
+        lazy="raise",
+    )
+
+
+# ---------------------------------------------------------------------------
+# PostLike (idempotent per-(user, post) like row)
+# ---------------------------------------------------------------------------
+
+
+class PostLike(UUIDAuditBase):
+    """A single user's like on a single post.
+
+    Source of truth for the per-post ``like_count`` counter on
+    :class:`Post` (which is maintained by an AFTER INSERT/DELETE PG
+    trigger in the engagement migration). The unique constraint on
+    ``(post_id, user_id)`` provides FR-002 idempotency — duplicate
+    submissions from the same user become no-ops at the DB level via
+    ``INSERT ... ON CONFLICT DO NOTHING``.
+    """
+
+    __table_args__ = (
+        UniqueConstraint("post_id", "user_id", name="uq_post_likes_post_user"),
+        Index(
+            "ix_post_likes_post_id_created_at_desc",
+            "post_id",
+            "created_at",
+            postgresql_ops={"created_at": "DESC"},
+        ),
+        Index("ix_post_likes_user_id", "user_id"),
+        Index("ix_post_likes_workspace_id", "workspace_id"),
+    )
+
+    post_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("posts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    post: Mapped[Post] = relationship(
+        "Post",
+        back_populates="likes",
+        lazy="raise",
+    )
+
+
+# ---------------------------------------------------------------------------
+# PostComment (auth + anonymous; pending/approved/rejected; tombstone)
+# ---------------------------------------------------------------------------
+
+
+class PostComment(UUIDAuditBase, HasSoftDeletedMixin):
+    """Comment on a post — authenticated OR anonymous, optionally a reply.
+
+    Two-axis lifecycle:
+
+    * ``state`` is the moderation axis (``pending`` / ``approved`` /
+      ``rejected``); only ``approved`` rows are returned by public list
+      endpoints.
+    * ``deleted_at`` (from :class:`HasSoftDeletedMixin`) is the soft-
+      delete axis; combined with ``is_tombstoned`` for the top-level-
+      comment-with-replies case (FR-020).
+
+    Author shape is XOR: exactly one of ``author_user_id`` (authenticated)
+    OR ``author_display_name`` (anonymous) is set per row, enforced by
+    ``ck_post_comments_author_xor``.
+    """
+
+    __table_args__ = (
+        CheckConstraint(
+            "(author_user_id IS NOT NULL) <> (author_display_name IS NOT NULL)",
+            name="ck_post_comments_author_xor",
+        ),
+        CheckConstraint(
+            "state IN ('pending', 'approved', 'rejected')",
+            name="ck_post_comments_state_values",
+        ),
+        CheckConstraint(
+            "length(trim(body)) > 0",
+            name="ck_post_comments_body_nonempty",
+        ),
+        CheckConstraint(
+            f"length(body) <= {POST_COMMENT_BODY_MAX_LENGTH}",
+            name="ck_post_comments_body_max",
+        ),
+        CheckConstraint(
+            "NOT is_tombstoned OR deleted_at IS NOT NULL",
+            name="ck_post_comments_tombstone_implies_deleted",
+        ),
+        CheckConstraint(
+            "parent_comment_id IS NULL OR is_tombstoned = false",
+            name="ck_post_comments_parent_no_tombstone",
+        ),
+        # Top-level list page (newest-first), only approved + live rows.
+        Index(
+            "ix_post_comments_post_top_level_recent",
+            "post_id",
+            "created_at",
+            postgresql_ops={"created_at": "DESC"},
+            postgresql_where=(
+                "state = 'approved' AND deleted_at IS NULL AND parent_comment_id IS NULL"
+            ),
+        ),
+        # Replies list under a parent (oldest-first).
+        Index(
+            "ix_post_comments_parent_replies",
+            "parent_comment_id",
+            "created_at",
+            postgresql_where="state = 'approved' AND deleted_at IS NULL",
+        ),
+        # Moderator pending queue, oldest-first per workspace.
+        Index(
+            "ix_post_comments_workspace_pending",
+            "workspace_id",
+            "created_at",
+            postgresql_where="state = 'pending'",
+        ),
+        # Sweeper TTL purge.
+        Index(
+            "ix_post_comments_pending_created_at",
+            "created_at",
+            postgresql_where="state = 'pending'",
+        ),
+        # Reconciliation COUNT(*) helper.
+        Index(
+            "ix_post_comments_post_state",
+            "post_id",
+            "state",
+            postgresql_where="deleted_at IS NULL",
+        ),
+        Index("ix_post_comments_author_user_id", "author_user_id"),
+        Index(
+            "ix_post_comments_author_email_pending",
+            "author_email",
+            postgresql_where="state = 'pending' AND author_email IS NOT NULL",
+        ),
+    )
+
+    post_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("posts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    parent_comment_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("post_comments.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+
+    # Authenticated authorship — NULL for anonymous rows. RESTRICT forces
+    # user-deletion flows to retarget to DELETED_USER_SENTINEL_ID (FR-030).
+    author_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+
+    # Anonymous authorship — NULL for authenticated rows. Display name is
+    # required when present; the XOR CHECK enforces "exactly one shape."
+    author_display_name: Mapped[str | None] = mapped_column(
+        String(POST_COMMENT_ANONYMOUS_DISPLAY_NAME_MAX_LENGTH),
+        nullable=True,
+    )
+    author_email: Mapped[str | None] = mapped_column(
+        String(POST_COMMENT_ANONYMOUS_EMAIL_MAX_LENGTH),
+        nullable=True,
+    )
+    # Captured only for anonymous submissions; never returned in public
+    # responses. Used by the per-IP rate-limiter forensics + moderator UI.
+    author_ip: Mapped[ipaddress.IPv4Address | ipaddress.IPv6Address | None] = mapped_column(
+        INET,
+        nullable=True,
+    )
+
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default=CommentState.PENDING.value,
+        server_default=CommentState.PENDING.value,
+    )
+    is_tombstoned: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+    moderation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    moderated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    moderated_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTimeUTC(timezone=True),
+        nullable=True,
+    )
+    edited_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTimeUTC(timezone=True),
+        nullable=True,
+    )
+
+    post: Mapped[Post] = relationship(
+        "Post",
+        back_populates="comments",
         lazy="raise",
     )
