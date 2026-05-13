@@ -838,7 +838,10 @@ async def test_create_writes_initial_version_row(
     redis_cleanup.append(post.id)
 
     rows, total = await post_version_repo.list_for_post(
-        real_session, post_id=post.id, limit=100, offset=0,
+        real_session,
+        post_id=post.id,
+        limit=100,
+        offset=0,
     )
     assert total == 1
     assert len(rows) == 1
@@ -879,7 +882,10 @@ async def test_flush_one_appends_post_version_row(
     assert flushed is not None
 
     rows, total = await post_version_repo.list_for_post(
-        real_session, post_id=post.id, limit=100, offset=0,
+        real_session,
+        post_id=post.id,
+        limit=100,
+        offset=0,
     )
     assert total == 2
     # newest first
@@ -923,7 +929,10 @@ async def test_flush_one_skips_version_when_unchanged(
     await real_session.flush()
 
     _, total_after_same_content = await post_version_repo.list_for_post(
-        real_session, post_id=post.id, limit=100, offset=0,
+        real_session,
+        post_id=post.id,
+        limit=100,
+        offset=0,
     )
     # Still 1: create wrote v1, autosave + flush observed identical hash/title -> skip.
     assert total_after_same_content == 1
@@ -954,7 +963,10 @@ async def test_flush_one_skips_version_when_unchanged(
     await real_session.flush()
 
     rows, total_after_title_change = await post_version_repo.list_for_post(
-        real_session, post_id=post.id, limit=100, offset=0,
+        real_session,
+        post_id=post.id,
+        limit=100,
+        offset=0,
     )
     assert total_after_title_change == 2
     assert rows[0].title == "Renamed draft post"
@@ -996,7 +1008,10 @@ async def test_concurrent_flush_one_assigns_distinct_version_numbers(
         await real_session.flush()
 
     rows, total = await post_version_repo.list_for_post(
-        real_session, post_id=post.id, limit=100, offset=0,
+        real_session,
+        post_id=post.id,
+        limit=100,
+        offset=0,
     )
     # 1 (create) + 4 (each flush) = 5 distinct rows, version numbers 1..5.
     assert total == 5
@@ -1020,7 +1035,10 @@ async def test_hard_delete_post_cascades_versions(
     redis_cleanup.append(post.id)
 
     _, total_before = await post_version_repo.list_for_post(
-        real_session, post_id=post.id, limit=100, offset=0,
+        real_session,
+        post_id=post.id,
+        limit=100,
+        offset=0,
     )
     assert total_before >= 1
 
@@ -1028,7 +1046,10 @@ async def test_hard_delete_post_cascades_versions(
     await real_session.flush()
 
     _, total_after = await post_version_repo.list_for_post(
-        real_session, post_id=post.id, limit=100, offset=0,
+        real_session,
+        post_id=post.id,
+        limit=100,
+        offset=0,
     )
     assert total_after == 0
 
@@ -1056,7 +1077,10 @@ async def test_publish_marks_version_as_published_snapshot(
     await real_session.flush()
 
     rows, total = await post_version_repo.list_for_post(
-        real_session, post_id=post.id, limit=100, offset=0,
+        real_session,
+        post_id=post.id,
+        limit=100,
+        offset=0,
     )
     # create wrote v1 (draft). publish() -> flush_one is a no-op (no
     # pending autosave content), then publish writes a published-

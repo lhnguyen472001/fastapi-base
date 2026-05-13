@@ -7,7 +7,7 @@ import hashlib
 import json
 import math
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -27,11 +27,49 @@ from apps.blog.repositories import (
 )
 from apps.blog.schemas import PostDetailResponse
 from apps.blog.store import AutosaveSnapshot, AutosaveStore
-from apps.blog.utils import compress_content_json, compute_content_artifacts
+from apps.blog.utils import (
+    compress_content_json_async,
+    compute_content_artifacts_async,
+    sanitize_html_async,
+)
 from apps.core.database.transactional import transactional
 from apps.core.database.types import SessionType
 from apps.core.redis import CacheManager
-from apps.core.tiptap import extract_text, render_html, sanitize_html
+from apps.core.tiptap import extract_text, render_html
+
+if TYPE_CHECKING:
+    from typing import Protocol
+
+    class _AutosaveHost(Protocol):
+        """Static contract for the host class that mixes in :class:`_PostAutosaveMixin`.
+
+        Enumerates the methods the mixin calls on ``self`` that are NOT
+        declared on the mixin itself — they are resolved at runtime
+        through MRO from :class:`PostService`. Keeping the contract
+        explicit means type checkers can flag a host that drifts away
+        from this surface. F-MAINT-2.
+        """
+
+        async def find_or_raise(
+            self,
+            session: SessionType,
+            *,
+            workspace_id: uuid.UUID,
+            post_id: uuid.UUID,
+            load_content: bool = ...,
+        ) -> Post: ...
+
+        def _build_detail(self, post: Post) -> PostDetailResponse: ...
+
+        async def _invalidate_workspace_cache(self, workspace_id: uuid.UUID) -> None: ...
+
+        async def _reload(
+            self,
+            session: SessionType,
+            *,
+            workspace_id: uuid.UUID,
+            post_id: uuid.UUID,
+        ) -> Post: ...
 
 
 class _PostAutosaveMixin:
@@ -39,7 +77,9 @@ class _PostAutosaveMixin:
 
     The host class must provide ``find_or_raise``, ``_build_detail``,
     ``_invalidate_workspace_cache``, and ``_reload`` — these are resolved
-    at runtime through MRO from :class:`PostService` itself.
+    at runtime through MRO from :class:`PostService` itself. The full
+    static surface is captured by :class:`_AutosaveHost` above (under
+    ``TYPE_CHECKING`` so it has no runtime cost).
     """
 
     repository: PostRepository
@@ -133,36 +173,56 @@ class _PostAutosaveMixin:
         if not self.autosave_store.enabled:
             return None
 
+        # F-PERF-4: read the snapshot and run the CPU-heavy Tiptap +
+        # compression pipeline OUTSIDE the per-post flush lock. The lock
+        # serializes Postgres writes between workers; it does not need
+        # to wrap text extraction, HTML render, sanitize, hash, or zstd
+        # compression. The mark_flushed CAS is what guards against a
+        # newer autosave racing the flush.
+        snapshot = await self.autosave_store.get(post_id)
+        if snapshot is None or not snapshot.is_dirty:
+            return None
+        if snapshot.workspace_id != workspace_id:
+            # Defensive: never flush across workspaces; treat as no-op.
+            logger.warning(
+                "PostService - flush_one - workspace mismatch; skipping",
+                expected=str(workspace_id),
+                got=str(snapshot.workspace_id),
+                post_id=str(post_id),
+            )
+            return None
+
+        (
+            content_text,
+            content_html,
+            content_hash,
+            word_count,
+            reading_minutes,
+        ) = await compute_content_artifacts_async(snapshot.content_json)
+        content_json_compressed = await compress_content_json_async(snapshot.content_json)
+
+        # Pre-lock read: ``post.content`` (eager-loaded) decides INSERT
+        # vs UPDATE on PostContent. In a steady-state flush the row
+        # always exists because PostService.create writes it alongside
+        # the post; the None branch only matters for legacy data. The
+        # underlying ``post_contents.post_id`` unique constraint is the
+        # final guard against the (vanishingly rare) two-worker race
+        # where both observe ``post.content is None``.
+        post = await self.find_or_raise(
+            session,
+            workspace_id=workspace_id,
+            post_id=post_id,
+            load_content=True,
+        )
+
         async with self.autosave_store.acquire_flush_lock(post_id) as got_lock:
             if not got_lock:
                 return None
 
-            snapshot = await self.autosave_store.get(post_id)
-            if snapshot is None or not snapshot.is_dirty:
-                return None
-            if snapshot.workspace_id != workspace_id:
-                # Defensive: never flush across workspaces; treat as no-op.
-                logger.warning(
-                    "PostService - flush_one - workspace mismatch; skipping",
-                    expected=str(workspace_id),
-                    got=str(snapshot.workspace_id),
-                    post_id=str(post_id),
-                )
-                return None
-
-            post = await self.find_or_raise(
-                session,
-                workspace_id=workspace_id,
-                post_id=post_id,
-                load_content=True,
-            )
-
-            content_text, content_html, content_hash, word_count, reading_minutes = compute_content_artifacts(
-                snapshot.content_json,
-            )
-
-            # Cross-check: snapshot.content_hash must equal the recomputed
-            # hash, otherwise something corrupted the JSON in Redis.
+            # Sanity check kept from the pre-reorder code path: the
+            # snapshot we just read must hash to the recompute we did.
+            # A mismatch implies the JSON was corrupted between the
+            # Redis write and our read.
             if content_hash != snapshot.content_hash:
                 logger.warning(
                     "PostService - flush_one - hash drift between Redis snapshot and recompute",
@@ -211,11 +271,16 @@ class _PostAutosaveMixin:
                 snapshot=snapshot,
                 content_text=content_text,
                 content_hash=content_hash,
+                content_json_compressed=content_json_compressed,
             )
 
-            await self.autosave_store.mark_flushed(post_id, content_hash=content_hash)
-            await self._invalidate_workspace_cache(workspace_id)
-            return await self._reload(session, workspace_id=workspace_id, post_id=post_id)
+        # Post-lock: mark_flushed is a Redis CAS — atomic on its own;
+        # the per-post lock added no extra ordering guarantee around it.
+        # Cache invalidation + reload return the freshly-written state
+        # to the caller; neither needs to serialize across workers.
+        await self.autosave_store.mark_flushed(post_id, content_hash=content_hash)
+        await self._invalidate_workspace_cache(workspace_id)
+        return await self._reload(session, workspace_id=workspace_id, post_id=post_id)
 
     async def _write_post_version(
         self,
@@ -226,6 +291,7 @@ class _PostAutosaveMixin:
         snapshot: AutosaveSnapshot,
         content_text: str,
         content_hash: str,
+        content_json_compressed: bytes,
     ) -> None:
         """Append a row to ``post_versions`` reflecting this flush.
 
@@ -233,17 +299,15 @@ class _PostAutosaveMixin:
         (skip when content and title are unchanged vs. the previous
         version), and FR-007 (mark ``is_published_snapshot`` on the
         version row where the post's ``status`` transitions into
-        ``published``).
+        ``published``). ``content_json_compressed`` is the zstd-compressed
+        snapshot body, pre-computed by the caller so the compression
+        cost does not run inside the flush lock (F-PERF-4).
         """
         previous = await self.post_version_repository.find_latest_for_post(
             session,
             post_id=post.id,
         )
-        if (
-            previous is not None
-            and previous.content_hash == content_hash
-            and previous.title == post.title
-        ):
+        if previous is not None and previous.content_hash == content_hash and previous.title == post.title:
             return
 
         is_publish_transition = post.status == PostStatus.PUBLISHED.value and (
@@ -256,7 +320,7 @@ class _PostAutosaveMixin:
                 "post_id": post.id,
                 "workspace_id": workspace_id,
                 "title": post.title,
-                "content_json_compressed": compress_content_json(snapshot.content_json),
+                "content_json_compressed": content_json_compressed,
                 "content_text": content_text,
                 "content_hash": content_hash,
                 "created_by": snapshot.author_id,
@@ -302,7 +366,7 @@ class _PostAutosaveMixin:
         # consistent payload (clients sometimes display content_html
         # rather than re-rendering content_json themselves).
         content_text = extract_text(snapshot.content_json)
-        content_html = sanitize_html(render_html(snapshot.content_json))
+        content_html = await sanitize_html_async(render_html(snapshot.content_json))
         return detail.model_copy(
             update={
                 "content_json": snapshot.content_json,

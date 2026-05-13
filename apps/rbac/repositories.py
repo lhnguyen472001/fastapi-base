@@ -24,16 +24,21 @@ class RoleRepository(BaseSQLAlchemyRepository[Role]):
     model_type = Role
 
     async def find_by_name(self, session: AsyncSession, *, name: str) -> Role | None:
-        result = await session.execute(select(Role).where(Role.name == name))
-        return result.scalar_one_or_none()
+        # F-PERF-3: route through ``get_one`` so the base soft-delete
+        # filter applies uniformly. ``Role`` itself has no ``deleted_at``
+        # column today; the refactor is for consistency with every
+        # other lookup on a ``BaseSQLAlchemyRepository``.
+        return await self.get_one(session, Role.name == name)
 
 
 class PermissionRepository(BaseSQLAlchemyRepository[Permission]):
     model_type = Permission
 
     async def find_by_name(self, session: AsyncSession, *, name: str) -> Permission | None:
-        result = await session.execute(select(Permission).where(Permission.name == name))
-        return result.scalar_one_or_none()
+        # F-PERF-3: ``Permission`` carries ``HasSoftDeletedMixin`` — going
+        # through ``get_one`` means soft-deleted rows are excluded
+        # automatically rather than leaking through name lookups.
+        return await self.get_one(session, Permission.name == name)
 
 
 class GroupRepository(BaseSQLAlchemyRepository[Group]):

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.core.database.transactional import transactional
 from apps.core.services.base import SQLAlchemyService
+from apps.rbac import _metrics
 from apps.rbac.exceptions import (
     PermissionNotFoundError,
     RBACConflictError,
@@ -179,6 +180,15 @@ class PermissionService(SQLAlchemyService[Permission]):
                 link_id,
                 comp_exc,
             )
+
+        _metrics.record_compensation_drift(
+            kind="role_permission",
+            outcome="abandoned" if drift else "compensated",
+            target_id=link_id,
+            mutation=operation,
+            cause=sync_exc,
+            subject_id=None,
+        )
 
         msg = (
             f"DRIFT: relational link {link_id} committed but Casbin sync and compensation both failed: {sync_exc}"

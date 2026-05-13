@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.core.database.transactional import transactional
 from apps.core.services.base import SQLAlchemyService
+from apps.rbac import _metrics
 from apps.rbac.exceptions import (
     GroupNotFoundError,
     RBACConflictError,
@@ -235,6 +236,14 @@ class GroupService(SQLAlchemyService[Group]):
         """Best-effort compensation for a committed UserGroup whose Casbin sync failed."""
         await self._best_effort_remove_grouping_policies(operation, rules, sync_exc)
         drift = await self._best_effort_delete_user_group(membership_id, operation, session)
+        _metrics.record_compensation_drift(
+            kind="user_group",
+            outcome="abandoned" if drift else "compensated",
+            target_id=membership_id,
+            mutation=operation,
+            cause=sync_exc,
+            subject_id=rules[0][0] if rules else None,
+        )
         msg = (
             f"DRIFT: UserGroup {membership_id} committed but Casbin sync and compensation both failed: {sync_exc}"
             if drift
@@ -254,6 +263,14 @@ class GroupService(SQLAlchemyService[Group]):
         """Best-effort compensation for a committed GroupRole whose Casbin sync failed."""
         await self._best_effort_remove_grouping_policies(operation, rules, sync_exc)
         drift = await self._best_effort_delete_group_role(link_id, operation, session)
+        _metrics.record_compensation_drift(
+            kind="group_role",
+            outcome="abandoned" if drift else "compensated",
+            target_id=link_id,
+            mutation=operation,
+            cause=sync_exc,
+            subject_id=None,
+        )
         msg = (
             f"DRIFT: GroupRole {link_id} committed but Casbin sync and compensation both failed: {sync_exc}"
             if drift

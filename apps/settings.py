@@ -358,6 +358,18 @@ class BlogSettings(BaseModel):
         ge=1.0,
         description="Seconds between post-version retention-sweep ticks.",
     )
+    large_content_bytes: int = Field(
+        default=65_536,
+        ge=1_024,
+        le=16 * 1024 * 1024,
+        description=(
+            "Editor JSON payload size at or above which the Tiptap content "
+            "pipeline (render_html + sanitize_html + compress + word/text "
+            "extraction) is offloaded to a worker thread via "
+            "``asyncio.to_thread``. Below this threshold the pipeline runs "
+            "inline (no thread hand-off cost). Valid range: 1 KiB to 16 MiB."
+        ),
+    )
 
 
 _DEFAULT_DEV_DB_PASSWORD = "postgres"  # noqa: S105 — sentinel value compared against, not a real password

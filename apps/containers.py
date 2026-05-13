@@ -14,4 +14,12 @@ class AppContainer(containers.DeclarativeContainer):
     rbac: providers.Provider[RBACContainer] = providers.Container(RBACContainer)
     product: providers.Provider[ProductContainer] = providers.Container(ProductContainer)
     workspace: providers.Provider[WorkspaceContainer] = providers.Container(WorkspaceContainer)
-    blog: providers.Provider[BlogContainer] = providers.Container(BlogContainer)
+    # F-MAINT-1: wire the blog's external user_repository dependency from
+    # the user container so apps/blog/containers.py never imports apps.user.
+    # mypy does not model attribute access on ``providers.Container`` instances;
+    # the attribute resolves correctly at runtime through dependency-injector's
+    # container introspection.
+    blog: providers.Provider[BlogContainer] = providers.Container(
+        BlogContainer,
+        user_repository=user.user_repository,  # type: ignore[attr-defined]
+    )

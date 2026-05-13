@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.core.database.transactional import transactional
 from apps.core.services.base import SQLAlchemyService
+from apps.rbac import _metrics
 from apps.rbac.exceptions import RBACConflictError, RBACPolicySyncError
 from apps.rbac.models import ObjectPermission
 from apps.rbac.services._helpers import instance_obj, user_sub
@@ -77,8 +78,9 @@ class ObjectPermissionService(SQLAlchemyService[ObjectPermission]):
             await self._compensate_object_permission_drift(
                 session,
                 grant_id=grant.id,
-                operation="grant",
+                operation="grant_object_permission",
                 sync_exc=sync_exc,
+                subject_id=user_sub(user_id),
             )
 
         logger.info(
@@ -220,6 +222,7 @@ class ObjectPermissionService(SQLAlchemyService[ObjectPermission]):
         grant_id: int,
         operation: str,
         sync_exc: BaseException,
+        subject_id: str | None = None,
     ) -> None:
         """Best-effort compensation for a committed grant whose Casbin sync failed.
 
@@ -242,6 +245,15 @@ class ObjectPermissionService(SQLAlchemyService[ObjectPermission]):
                 grant_id,
                 comp_exc,
             )
+
+        _metrics.record_compensation_drift(
+            kind="object_permission",
+            outcome="abandoned" if drift else "compensated",
+            target_id=grant_id,
+            mutation=operation,
+            cause=sync_exc,
+            subject_id=subject_id,
+        )
 
         msg = (
             f"DRIFT: object grant {grant_id} committed but Casbin sync and compensation both failed: {sync_exc}"

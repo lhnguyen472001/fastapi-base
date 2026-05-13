@@ -12,6 +12,7 @@ They preserve the route signature so FastAPI's dependency injection and
 from __future__ import annotations
 
 import functools
+import inspect
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
@@ -29,6 +30,26 @@ def _extract(kwargs: dict[str, Any], name: str) -> Any:
     return kwargs[name]
 
 
+def _assert_parameters(func: Callable[..., Any], decorator: str, required: tuple[str, ...]) -> None:
+    """Raise ``TypeError`` at decoration time if ``func`` is missing required params.
+
+    The wrapped functions are FastAPI routes that receive their context
+    via kwargs (FastAPI's dependency injection passes everything by name).
+    A route that forgets to declare ``current_user`` / ``access_service``
+    / ``session`` / the configured ``id_param`` would otherwise raise a
+    :class:`RuntimeError` on first request — too late.
+    """
+    params = inspect.signature(func).parameters
+    missing = [name for name in required if name not in params]
+    if missing:
+        missing_repr = ", ".join(missing)
+        msg = (
+            f"@{decorator}: function {func.__qualname__!r} is missing required parameter(s): "
+            f"{missing_repr}. Add them to the route signature (FastAPI passes context by keyword)."
+        )
+        raise TypeError(msg)
+
+
 def require_access(
     resource: str,
     action: str,
@@ -40,6 +61,8 @@ def require_access(
     """
 
     def decorator(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+        _assert_parameters(func, "require_access", ("current_user", "access_service"))
+
         @functools.wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
             current_user = _extract(kwargs, "current_user")
@@ -77,6 +100,12 @@ def require_ownership(
     def decorator(
         func: Callable[..., Awaitable[Any]],
     ) -> Callable[..., Awaitable[Any]]:
+        _assert_parameters(
+            func,
+            "require_ownership",
+            ("current_user", "access_service", "session", id_param),
+        )
+
         @functools.wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
             current_user = _extract(kwargs, "current_user")

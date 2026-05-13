@@ -25,22 +25,39 @@ def get_instrumented_attr(
     return key
 
 
-def model_from_dict(model: type[SQLAlchemyModelT], **kwargs: dict[str, Any]) -> SQLAlchemyModelT:
+def model_from_dict(
+    model: type[SQLAlchemyModelT],
+    *,
+    strict: bool = True,
+    **kwargs: Any,
+) -> SQLAlchemyModelT:
     """Create an ORM model instance from a dictionary of attributes.
 
     Args:
         model: The SQLAlchemy model class to instantiate.
+        strict: When True (the default), raise :class:`TypeError` for any
+            kwarg that is not a column of ``model``. When False, silently
+            drop unknown kwargs — the pre-F-QUAL-1 behavior. Opt out only
+            when filtering trusted-and-superset payloads.
         **kwargs: Keyword arguments containing model attribute values.
 
     Returns:
-        SQLAlchemyModelT: A new instance of the model populated with the provided values.
-    """
-    data = {
-        column_name: kwargs[column_name]
-        for column_name in model.__table__.columns.keys()  # noqa: SIM118
-        if column_name in kwargs
-    }
+        SQLAlchemyModelT: A new instance of the model populated with the
+        provided values.
 
+    Raises:
+        TypeError: If ``strict`` is True and ``kwargs`` contains a key
+            that is not a mapped column of ``model``.
+    """
+    column_names = set(model.__table__.columns.keys())
+    if strict:
+        unknown = set(kwargs) - column_names
+        if unknown:
+            unknown_list = ", ".join(sorted(unknown))
+            msg = f"model_from_dict: unknown attribute(s) {unknown_list!r} on {model.__name__}"
+            raise TypeError(msg)
+
+    data = {name: kwargs[name] for name in column_names if name in kwargs}
     return model(**data)
 
 

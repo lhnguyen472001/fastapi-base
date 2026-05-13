@@ -131,15 +131,23 @@ class WorkspaceMemberRepository(BaseSQLAlchemyRepository[WorkspaceMember]):
         limit: int,
         offset: int,
     ) -> tuple[list[WorkspaceMember], int]:
-        """List members of a workspace with pagination and an optional role filter."""
+        """List members of a workspace with pagination and an optional role filter.
+
+        Delegates to :meth:`BaseSQLAlchemyRepository.list_and_count` with
+        ``using_window_function=True`` so the page and the total fold
+        into a single ``SELECT ... COUNT(*) OVER ()`` statement
+        (F-PERF-2). Preserves the original ``(rows, total)`` shape.
+        """
         conditions: list[Any] = [WorkspaceMember.workspace_id == workspace_id]
         if role is not None:
             conditions.append(WorkspaceMember.role == role.value)
 
-        base = select(WorkspaceMember).where(*conditions)
-        total_stmt = select(func.count()).select_from(base.subquery())
-        total = (await session.execute(total_stmt)).scalar_one()
-
-        page_stmt = base.order_by(WorkspaceMember.created_at.asc()).limit(limit).offset(offset)
-        items = list((await session.execute(page_stmt)).scalars().all())
-        return items, int(total)
+        statement = self.statement.limit(limit).offset(offset)
+        rows, total = await self.list_and_count(
+            session,
+            *conditions,
+            statement=statement,
+            order_by=(WorkspaceMember.created_at, False),
+            using_window_function=True,
+        )
+        return list(rows), total

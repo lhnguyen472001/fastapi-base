@@ -3,16 +3,24 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 import casbin
 from casbin_async_sqlalchemy_adapter import Adapter
 from casbin_redis_watcher import WatcherOptions, new_watcher
 from loguru import logger
+from opentelemetry import metrics
 
 from apps.settings import app_settings
 
 RBAC_MODEL_PATH = Path(__file__).parent / "casbin" / "rbac_model.conf"
+
+# Module-level slot holding the registered policy-count gauge instrument so
+# the OTel SDK does not garbage-collect it after registration. Re-registration
+# replaces the slot, which is idempotent because the SDK de-dupes instruments
+# by name within a meter.
+_POLICY_COUNT_GAUGE: Any = None
 
 
 async def enforcer_factory(
@@ -77,3 +85,61 @@ def _build_watcher_options(redis_url: str) -> WatcherOptions:
     options.password = parsed.password
     options.ssl = parsed.scheme == "rediss"
     return options
+
+
+def register_policy_count_gauge(
+    enforcer: casbin.AsyncEnforcer,
+    *,
+    meter: metrics.Meter | None = None,
+) -> Any:
+    """Register an observable up-down counter for the in-memory policy size.
+
+    The instrument is named ``rbac_enforcer_policy_count`` (unit
+    ``{policies}``). Its callback runs at metric-reader scrape time and
+    reports ``len(enforcer.get_policy()) + len(enforcer.get_grouping_policy())``
+    as a single integer observation per worker. See
+    ``specs/002-code-quality-perf-improvements/contracts/metrics.md``.
+
+    The returned instrument is also held on a module-level slot so the
+    SDK does not garbage-collect it after registration. The function is
+    idempotent — re-registering against the same meter replaces the
+    instrument; the SDK de-dupes by name within a meter scope.
+
+    Args:
+        enforcer: The Casbin enforcer to observe.
+        meter: Optional injected meter; defaults to the global meter for
+            ``apps.rbac``. The parameter exists primarily for tests that
+            install an isolated ``MeterProvider`` + ``InMemoryMetricReader``
+            (OTel's global meter provider is set-once).
+
+    Returns:
+        The registered observable instrument.
+    """
+    # The module-level slot keeps the instrument alive for the SDK after
+    # registration; the global is intentional, not accidental shared state.
+    global _POLICY_COUNT_GAUGE  # noqa: PLW0603
+
+    target_meter = meter if meter is not None else metrics.get_meter("apps.rbac")
+
+    def _callback(_options: Any) -> Any:
+        try:
+            total = len(enforcer.get_policy()) + len(enforcer.get_grouping_policy())
+        except Exception as exc:
+            logger.warning(
+                "register_policy_count_gauge - callback failed; skipping observation: {!r}",
+                exc,
+            )
+            return ()
+        return (metrics.Observation(total),)
+
+    _POLICY_COUNT_GAUGE = target_meter.create_observable_up_down_counter(
+        name="rbac_enforcer_policy_count",
+        callbacks=[_callback],
+        unit="{policies}",
+        description=(
+            "Number of policy rules + grouping rules currently held in the "
+            "worker's in-memory Casbin enforcer. Observed at scrape time. "
+            "See contracts/metrics.md."
+        ),
+    )
+    return _POLICY_COUNT_GAUGE

@@ -96,3 +96,15 @@ POST_VERSION_SWEEPER_LEADER_TTL: Final[int] = 1800
 POST_VERSION_DIFF_MAX_BYTES: Final[int] = 1_048_576
 POST_VERSION_CHANGE_NOTE_MAX_LENGTH: Final[int] = 280
 POST_VERSION_INSERT_RETRY_LIMIT: Final[int] = 3
+
+# ---------------------------------------------------------------------------
+# Large editor content offload (F-PERF-1)
+# ---------------------------------------------------------------------------
+# Payloads at or above ``LARGE_CONTENT_BYTES`` run the Tiptap content pipeline
+# (render_html + sanitize_html + compress + word/text extraction) on a worker
+# thread via ``asyncio.to_thread`` so they do not block the event loop for
+# other concurrent requests on the same worker. Below the threshold the
+# pipeline runs inline (no thread hand-off cost).
+LARGE_CONTENT_BYTES_MIN: Final[int] = 1_024
+LARGE_CONTENT_BYTES_MAX: Final[int] = 16 * 1024 * 1024
+LARGE_CONTENT_BYTES: Final[int] = app_settings.blog.large_content_bytes

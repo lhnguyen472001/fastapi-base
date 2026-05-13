@@ -16,6 +16,7 @@ so every post-content helper stays in one module.
 
 from __future__ import annotations
 
+import asyncio
 import difflib
 import hashlib
 import json
@@ -28,6 +29,7 @@ import zstandard
 
 from apps.blog.constants import (
     BLOG_SLUG_PATTERN,
+    LARGE_CONTENT_BYTES,
     MIN_PUBLISH_BODY_CHARS,
     POST_VERSION_COMPRESSION_LEVEL,
     WORDS_PER_MINUTE,
@@ -98,6 +100,62 @@ def compress_content_json(payload: dict[str, Any]) -> bytes:
     serialized = orjson.dumps(payload)
     compressor = zstandard.ZstdCompressor(level=POST_VERSION_COMPRESSION_LEVEL)
     return compressor.compress(serialized)
+
+
+def _should_offload(payload_bytes: int, *, threshold_bytes: int = LARGE_CONTENT_BYTES) -> bool:
+    """Decide whether the Tiptap pipeline should run on a worker thread.
+
+    Returns ``True`` when ``payload_bytes`` is at or above ``threshold_bytes``
+    (and strictly positive). Below the threshold the synchronous pipeline
+    runs inline, avoiding the ~50 µs thread hand-off cost. The threshold
+    boundary is inclusive on the offload side so equality is deterministic.
+    """
+    if payload_bytes <= 0:
+        return False
+    return payload_bytes >= threshold_bytes
+
+
+async def compute_content_artifacts_async(
+    content_json: dict[str, Any],
+    *,
+    threshold_bytes: int = LARGE_CONTENT_BYTES,
+) -> tuple[str, str, str, int, int]:
+    """Async wrapper around :func:`compute_content_artifacts`.
+
+    Runs the pipeline on a worker thread via ``asyncio.to_thread`` when
+    the serialized payload is at or above ``threshold_bytes`` so the event
+    loop stays free for other concurrent requests; otherwise runs inline.
+    """
+    payload = orjson.dumps(content_json)
+    if _should_offload(len(payload), threshold_bytes=threshold_bytes):
+        return await asyncio.to_thread(compute_content_artifacts, content_json)
+    return compute_content_artifacts(content_json)
+
+
+async def compress_content_json_async(
+    payload: dict[str, Any],
+    *,
+    threshold_bytes: int = LARGE_CONTENT_BYTES,
+) -> bytes:
+    """Async wrapper around :func:`compress_content_json` with size gating."""
+    raw = orjson.dumps(payload)
+    if _should_offload(len(raw), threshold_bytes=threshold_bytes):
+        return await asyncio.to_thread(compress_content_json, payload)
+    return compress_content_json(payload)
+
+
+async def sanitize_html_async(
+    html: str,
+    *,
+    threshold_bytes: int = LARGE_CONTENT_BYTES,
+) -> str:
+    """Async wrapper around :func:`sanitize_html` with size gating.
+
+    Size is measured on the UTF-8 byte length of ``html``.
+    """
+    if _should_offload(len(html.encode("utf-8")), threshold_bytes=threshold_bytes):
+        return await asyncio.to_thread(sanitize_html, html)
+    return sanitize_html(html)
 
 
 def decompress_content_json(blob: bytes) -> dict[str, Any]:

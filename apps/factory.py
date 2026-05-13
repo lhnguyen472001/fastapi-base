@@ -44,7 +44,8 @@ from apps.core.rate_limit import limiter, rate_limit_exceeded_handler
 from apps.core.redis import close_redis_client
 from apps.health.routes import health_router
 from apps.product.routes import product_category_router, product_router
-from apps.rbac.enforcer import enforcer_factory
+from apps.rbac.containers import RBACContainer
+from apps.rbac.enforcer import register_policy_count_gauge
 from apps.rbac.routes import rbac_router
 from apps.rbac.seeders import sync_registered_resources
 from apps.settings import app_settings
@@ -79,8 +80,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     verify_rbac_multi_worker_safety()
     logger.info("factory - lifespan - Initializing RBAC resources")
 
+    # Materialize the per-worker enforcer Resource so it's the same singleton
+    # every subsequent service / route resolves through DI. Register the
+    # policy-count gauge against it for F-SCALE-1 observability.
+    enforcer = await RBACContainer.enforcer()
+    register_policy_count_gauge(enforcer)
+
     if app_settings.rbac.auto_seed_resources_from_registry:
-        enforcer = await enforcer_factory()
         async with async_session_factory() as seed_session, seed_session.begin():
             await sync_registered_resources(
                 seed_session,

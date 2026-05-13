@@ -15,7 +15,6 @@ from apps.blog.repositories import (
 from apps.blog.services import CategoryService, PostService, PostVersionService, TagService
 from apps.blog.store import AutosaveStore
 from apps.core.redis import CacheManager, get_redis_client
-from apps.user.repositories import UserRepository
 
 
 class BlogContainer(containers.DeclarativeContainer):
@@ -46,7 +45,12 @@ class BlogContainer(containers.DeclarativeContainer):
     post_content_repository = providers.Factory(PostContentRepository)
     post_tag_repository = providers.Factory(PostTagRepository)
     post_version_repository = providers.Factory(PostVersionRepository)
-    user_repository = providers.Factory(UserRepository)
+    # F-MAINT-1: declared as an external dependency so AppContainer wires
+    # it from ``UserContainer.user_repository`` — no direct import of
+    # ``apps.user.*`` from this module. The runtime payload type is
+    # known to AppContainer's composition; mypy cannot infer it without
+    # importing the user module here, which the architecture rule forbids.
+    user_repository = providers.Dependency()  # type: ignore[var-annotated]
 
     category_service = providers.Factory(CategoryService, repository=category_repository)
     tag_service = providers.Factory(TagService, repository=tag_repository)

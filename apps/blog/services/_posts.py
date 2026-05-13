@@ -46,8 +46,8 @@ from apps.blog.schemas import (
 from apps.blog.services._autosave import _PostAutosaveMixin
 from apps.blog.store import AutosaveStore
 from apps.blog.utils import (
-    compress_content_json,
-    compute_content_artifacts,
+    compress_content_json_async,
+    compute_content_artifacts_async,
     ensure_publish_ready,
     normalize_slug,
 )
@@ -109,7 +109,7 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
             await self._validate_tags(session, workspace_id=workspace_id, tag_ids=data.tag_ids)
 
         content_json = data.content_json or dict(EMPTY_TIPTAP_DOC)
-        content_text, content_html, content_hash, word_count, reading_minutes = compute_content_artifacts(
+        content_text, content_html, content_hash, word_count, reading_minutes = await compute_content_artifacts_async(
             content_json,
         )
 
@@ -153,7 +153,7 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
                 "post_id": post.id,
                 "workspace_id": workspace_id,
                 "title": post.title,
-                "content_json_compressed": compress_content_json(content_json),
+                "content_json_compressed": await compress_content_json_async(content_json),
                 "content_text": content_text,
                 "content_hash": content_hash,
                 "created_by": author_id,
@@ -349,7 +349,7 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
         if new_content is None:
             return
 
-        content_text, content_html, content_hash, word_count, reading_minutes = compute_content_artifacts(
+        content_text, content_html, content_hash, word_count, reading_minutes = await compute_content_artifacts_async(
             new_content,
         )
         if content_hash == post.content_hash:
@@ -427,7 +427,7 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
                     "post_id": post.id,
                     "workspace_id": workspace_id,
                     "title": post.title,
-                    "content_json_compressed": compress_content_json(post.content.content_json),
+                    "content_json_compressed": await compress_content_json_async(post.content.content_json),
                     "content_text": post.content.content_text,
                     "content_hash": post.content_hash or "",
                     "created_by": post.author_id,
