@@ -270,6 +270,9 @@ class AutosaveResponse(ResponseObjectSchema):
     post_id: uuid.UUID
     content_hash: str
     word_count: int
+    reading_minutes: int | None
+    updated_at: datetime.datetime
+    persisted: bool
 
 
 # ---------------------------------------------------------------------------
@@ -422,9 +425,74 @@ class PostCommentResponse(ResponseObjectSchema):
 class ListCommentsRequest(OffsetPaginationRequestSchema):
     """Query params for the top-level comment list."""
 
-    reading_minutes: int
-    updated_at: datetime.datetime
-    persisted: bool
+
+class ListPendingCommentsRequest(OffsetPaginationRequestSchema):
+    """Query params for the moderator pending-comment queue (US5).
+
+    Oldest-first by ``created_at`` so the moderator drains the queue in
+    submit order. Optional ``post_id`` narrows to one post; absent means
+    the whole workspace queue.
+    """
+
+    post_id: uuid.UUID | None = Field(default=None)
+
+
+class ModerationActionRequest(RequestObjectSchema):
+    """Body for moderator approve / reject / moderator-delete endpoints (US5).
+
+    ``moderation_reason`` is free-form and may be empty; the service
+    persists it verbatim to ``post_comments.moderation_reason`` for audit.
+    """
+
+    moderation_reason: str | None = Field(default=None, max_length=2_000)
+
+    @field_validator("moderation_reason")
+    @classmethod
+    def _strip_reason(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+
+class ModeratorPostCommentResponse(PostCommentResponse):
+    """Moderator-visible projection of :class:`PostCommentResponse` (US5).
+
+    Carries the private fields that public schemas deliberately omit:
+    ``state``, ``author_email``, ``author_ip``, and the moderator-attribution
+    triple. Body is returned regardless of tombstone state so the moderator
+    can review the actual content.
+    """
+
+    state: str  # apps.blog.enums.CommentState value
+    body: str | None  # override base to allow non-tombstoned reads
+    author_email: str | None = None
+    author_ip: str | None = None
+    moderation_reason: str | None = None
+    moderated_by_user_id: uuid.UUID | None = None
+    moderated_at: datetime.datetime | None = None
+    deleted_at: datetime.datetime | None = None
+
+
+class EngagementCounters(ResponseObjectSchema):
+    """Pair of counts surfaced by the reconcile endpoint."""
+
+    like_count: int = Field(..., ge=0)
+    comment_count: int = Field(..., ge=0)
+
+
+class ReconcileEngagementCountersResponse(ResponseObjectSchema):
+    """Result envelope for ``POST .../posts/{id}/reconcile-engagement-counters`` (US5).
+
+    ``before`` reflects the cached counters at request entry; ``after``
+    reflects the authoritative scalar counts; ``drift_corrected`` is True
+    iff any value moved.
+    """
+
+    post_id: uuid.UUID
+    before: EngagementCounters
+    after: EngagementCounters
+    drift_corrected: bool
 
 
 # ---------------------------------------------------------------------------

@@ -139,5 +139,5 @@ class UserContainer(containers.DeclarativeContainer):
 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan: [specs/002-code-quality-perf-improvements/plan.md](specs/002-code-quality-perf-improvements/plan.md)
+shell commands, and other important information, read the current plan: [specs/003-post-likes-comments/plan.md](specs/003-post-likes-comments/plan.md)
 <!-- SPECKIT END -->

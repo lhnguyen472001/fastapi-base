@@ -22,4 +22,5 @@ class AppContainer(containers.DeclarativeContainer):
     blog: providers.Provider[BlogContainer] = providers.Container(
         BlogContainer,
         user_repository=user.user_repository,  # type: ignore[attr-defined]
+        access_service=rbac.access_service,  # type: ignore[attr-defined]
     )

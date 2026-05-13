@@ -63,6 +63,12 @@ class BlogContainer(containers.DeclarativeContainer):
     # importing the user module here, which the architecture rule forbids.
     user_repository = providers.Dependency()  # type: ignore[var-annotated]
 
+    # Same pattern for the RBAC access service: wired by AppContainer
+    # from RBACContainer.access_service so the moderation service can
+    # run the post-author OR RBAC dispatch without this module importing
+    # apps.rbac directly.
+    access_service = providers.Dependency()  # type: ignore[var-annotated]
+
     category_service = providers.Factory(CategoryService, repository=category_repository)
     tag_service = providers.Factory(TagService, repository=tag_repository)
     post_service = providers.Factory(
@@ -105,4 +111,5 @@ class BlogContainer(containers.DeclarativeContainer):
         PostCommentModerationService,
         repository=post_comment_moderation_repository,
         post_repository=post_repository,
+        access_service=access_service,
     )

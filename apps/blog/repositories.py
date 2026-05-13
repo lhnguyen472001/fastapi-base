@@ -351,6 +351,68 @@ class PostRepository(BaseSQLAlchemyRepository[Post]):
         items = list((await session.execute(page)).scalars().unique().all())
         return items, int(total)
 
+    async def find_cached_counters(
+        self,
+        session: SessionType,
+        *,
+        post_id: uuid.UUID,
+    ) -> tuple[int, int] | None:
+        """Return ``(like_count, comment_count)`` from the ``posts`` row.
+
+        Reads the cached counter columns directly so the result is
+        immune to SQLAlchemy identity-map staleness (the PG triggers
+        UPDATE the row underneath whatever ORM instance the session
+        already holds). Returns ``None`` when the post does not exist.
+        """
+        stmt = select(Post.like_count, Post.comment_count).where(Post.id == post_id)
+        row = (await session.execute(stmt)).one_or_none()
+        if row is None:
+            return None
+        return int(row.like_count), int(row.comment_count)
+
+    async def scalar_counts_for_reconcile(
+        self,
+        session: SessionType,
+        *,
+        post_id: uuid.UUID,
+    ) -> tuple[int, int]:
+        """Return ``(like_count, comment_count)`` from authoritative scalars.
+
+        Used by the reconcile endpoint (FR-026 / research §15):
+        ``like_count`` is ``COUNT(*) FROM post_likes``; ``comment_count``
+        is the count of rows that satisfy the trigger's contribution
+        predicate (``state = 'approved' AND deleted_at IS NULL``).
+        """
+        like_stmt = select(func.count()).select_from(PostLike).where(PostLike.post_id == post_id)
+        comment_stmt = (
+            select(func.count())
+            .select_from(PostComment)
+            .where(
+                PostComment.post_id == post_id,
+                PostComment.state == "approved",
+                PostComment.deleted_at.is_(None),
+            )
+        )
+        like_count = (await session.execute(like_stmt)).scalar_one()
+        comment_count = (await session.execute(comment_stmt)).scalar_one()
+        return int(like_count), int(comment_count)
+
+    async def update_counters(
+        self,
+        session: SessionType,
+        *,
+        post_id: uuid.UUID,
+        like_count: int,
+        comment_count: int,
+    ) -> None:
+        """Overwrite ``posts.like_count`` + ``posts.comment_count`` in one UPDATE.
+
+        Used only by the operator-callable reconcile path; the trigger is
+        the authoritative writer for every normal mutation.
+        """
+        stmt = sa_update(Post).where(Post.id == post_id).values(like_count=like_count, comment_count=comment_count)
+        await session.execute(stmt)
+
 
 class PostContentRepository(BaseSQLAlchemyRepository[PostContent]):
     """Data access for the 1:1 :class:`PostContent` body."""
@@ -950,8 +1012,115 @@ class PostCommentModerationRepository(BaseSQLAlchemyRepository[PostComment]):
 
     Distinct from :class:`PostCommentRepository` so the moderator-only
     queries (pending list, transition_state, mark_moderator_deleted)
-    live next to each other. Method bodies land in Phase 7 of
-    specs/003-post-likes-comments.
+    live next to each other.
     """
 
     model_type = PostComment
+
+    async def list_pending(
+        self,
+        session: SessionType,
+        *,
+        workspace_id: uuid.UUID,
+        post_id: uuid.UUID | None,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[PostComment], int]:
+        """Paginated oldest-first list of ``state = 'pending'`` rows.
+
+        Uses ``ix_post_comments_workspace_pending``. ``post_id`` narrows
+        the scope to one post; ``None`` returns the whole workspace queue.
+        Soft-deleted rows are excluded — a moderator never sees a
+        pending-then-purged-by-sweeper row.
+        """
+        conditions: list[Any] = [
+            PostComment.workspace_id == workspace_id,
+            PostComment.state == "pending",
+            PostComment.deleted_at.is_(None),
+        ]
+        if post_id is not None:
+            conditions.append(PostComment.post_id == post_id)
+
+        base = select(PostComment).where(*conditions)
+        total = (await session.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
+
+        page_stmt = base.order_by(PostComment.created_at.asc()).limit(limit).offset(offset)
+        rows = list((await session.execute(page_stmt)).scalars().all())
+        return rows, int(total)
+
+    async def find_by_id(
+        self,
+        session: SessionType,
+        *,
+        comment_id: uuid.UUID,
+    ) -> PostComment | None:
+        """Fetch a comment row by id (including soft-deleted rows).
+
+        Moderator endpoints inspect ``state``, ``deleted_at``, and the
+        attribution columns so the soft-delete predicate is deliberately
+        NOT applied here.
+        """
+        stmt = select(PostComment).where(PostComment.id == comment_id)
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def transition_state(
+        self,
+        session: SessionType,
+        *,
+        comment_id: uuid.UUID,
+        new_state: str,
+        moderator_id: uuid.UUID,
+        moderated_at: datetime.datetime,
+        reason: str | None,
+    ) -> PostComment:
+        """Update ``state`` + moderator-attribution columns in one UPDATE.
+
+        Returns the post-update row via ``RETURNING``. The
+        ``trg_post_comments_count_upd`` trigger fires on the state change
+        and adjusts ``posts.comment_count`` accordingly (research §13 /
+        data-model §4): ``pending -> approved`` ticks +1; ``approved ->
+        rejected`` ticks -1; ``pending -> rejected`` is a no-op.
+        """
+        stmt = (
+            sa_update(PostComment)
+            .where(PostComment.id == comment_id)
+            .values(
+                state=new_state,
+                moderated_by_user_id=moderator_id,
+                moderated_at=moderated_at,
+                moderation_reason=reason,
+            )
+            .returning(PostComment)
+        )
+        return (await session.execute(stmt)).scalar_one()
+
+    async def mark_moderator_deleted(
+        self,
+        session: SessionType,
+        *,
+        comment_id: uuid.UUID,
+        moderator_id: uuid.UUID,
+        moderated_at: datetime.datetime,
+        reason: str | None,
+    ) -> PostComment:
+        """Soft-delete via moderator action.
+
+        Sets ``deleted_at`` + the attribution triple in a single UPDATE.
+        ``is_tombstoned`` is NOT set — moderator deletes are authoritative
+        removals, not author tombstones (data-model §3). The UPDATE
+        trigger drops ``posts.comment_count`` by 1 iff the row was
+        contributing (``state = 'approved' AND deleted_at IS NULL``)
+        before this UPDATE.
+        """
+        stmt = (
+            sa_update(PostComment)
+            .where(PostComment.id == comment_id)
+            .values(
+                deleted_at=moderated_at,
+                moderated_by_user_id=moderator_id,
+                moderated_at=moderated_at,
+                moderation_reason=reason,
+            )
+            .returning(PostComment)
+        )
+        return (await session.execute(stmt)).scalar_one()
