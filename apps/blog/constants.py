@@ -123,12 +123,8 @@ POST_COMMENT_EDIT_WINDOW_SECONDS: Final[int] = app_settings.blog.post_comment_ed
 
 # Pending-row TTL: the moderation sweeper purges ``state='pending'`` rows
 # older than this many seconds. Default 30 days.
-POST_COMMENT_MODERATION_PENDING_TTL_SECONDS: Final[int] = (
-    app_settings.blog.post_comment_moderation_pending_ttl_seconds
-)
-POST_COMMENT_MODERATION_SWEEP_INTERVAL: Final[float] = (
-    app_settings.blog.post_comment_moderation_sweep_interval
-)
+POST_COMMENT_MODERATION_PENDING_TTL_SECONDS: Final[int] = app_settings.blog.post_comment_moderation_pending_ttl_seconds
+POST_COMMENT_MODERATION_SWEEP_INTERVAL: Final[float] = app_settings.blog.post_comment_moderation_sweep_interval
 POST_COMMENT_MODERATION_SWEEP_BATCH: Final[int] = 200
 
 # Leader-elect Redis key for the comment-moderation sweeper. Distinct from

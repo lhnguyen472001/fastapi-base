@@ -460,9 +460,7 @@ class PostComment(UUIDAuditBase, HasSoftDeletedMixin):
             "post_id",
             "created_at",
             postgresql_ops={"created_at": "DESC"},
-            postgresql_where=(
-                "state = 'approved' AND deleted_at IS NULL AND parent_comment_id IS NULL"
-            ),
+            postgresql_where=("state = 'approved' AND deleted_at IS NULL AND parent_comment_id IS NULL"),
         ),
         # Replies list under a parent (oldest-first).
         Index(

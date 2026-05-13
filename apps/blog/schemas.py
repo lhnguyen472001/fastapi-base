@@ -237,6 +237,9 @@ class PostDetailResponse(PostResponse):
     content_text: str
     category: CategoryResponse | None = None
     tags: list[TagResponse] = Field(default_factory=list)
+    # Per-caller engagement indicator (FR-006). Populated when the caller is
+    # authenticated; ``None`` for anonymous reads.
+    liked_by_me: bool | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +270,43 @@ class AutosaveResponse(ResponseObjectSchema):
     post_id: uuid.UUID
     content_hash: str
     word_count: int
+
+
+# ---------------------------------------------------------------------------
+# Engagement (likes) schemas
+# ---------------------------------------------------------------------------
+
+
+class LikeState(ResponseObjectSchema):
+    """Per-post like state returned by the like / unlike endpoints (US1).
+
+    Always emits ``post_id`` + the current authoritative ``like_count`` +
+    the caller-specific ``liked_by_me`` flag (FR-006). Used by both
+    ``POST /like`` and ``DELETE /like`` so the client never needs a
+    follow-up read to refresh its local engagement state.
+    """
+
+    post_id: uuid.UUID
+    like_count: int = Field(..., ge=0)
+    liked_by_me: bool
+
+
+class LikerResponse(ResponseObjectSchema):
+    """Single entry in the ``GET /posts/{id}/likers`` list (US6).
+
+    Public display fields only — no email, no internal flags. Distinct
+    from the wider :class:`apps.user.schemas.UserResponse` so the surface
+    is intentionally small.
+    """
+
+    user_id: uuid.UUID
+    username: str
+    liked_at: datetime.datetime
+
+
+class ListLikersRequest(OffsetPaginationRequestSchema):
+    """Query params for the likers list."""
+
     reading_minutes: int
     updated_at: datetime.datetime
     persisted: bool

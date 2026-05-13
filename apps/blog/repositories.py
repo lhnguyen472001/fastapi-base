@@ -6,7 +6,8 @@ import uuid
 from collections.abc import Iterable
 from typing import Any
 
-from sqlalchemy import and_, delete, func, insert, select
+from sqlalchemy import and_, delete, exists, func, insert, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
@@ -217,6 +218,73 @@ class PostRepository(BaseSQLAlchemyRepository[Post]):
             content_hash=content_hash_val,
         )
 
+    async def find_published_by_slug_with_like_state(
+        self,
+        session: SessionType,
+        *,
+        workspace_id: uuid.UUID,
+        slug: str,
+        current_user_id: uuid.UUID | None,
+    ) -> tuple[Post, bool | None] | None:
+        """Return ``(Post, liked_by_me)`` for a published post by slug.
+
+        When ``current_user_id`` is non-None the SELECT is augmented with
+        a correlated ``EXISTS`` against ``post_likes`` so we never make a
+        second round-trip to populate ``PostDetailResponse.liked_by_me``
+        (research §10). Anonymous callers get ``liked_by_me = None``.
+
+        Returns ``None`` when the post is missing, soft-deleted, or not
+        in the ``published`` status.
+        """
+        liked_subq = (
+            exists()
+            .where(
+                PostLike.post_id == Post.id,
+                PostLike.user_id == current_user_id,
+            )
+            .label("liked_by_me")
+            if current_user_id is not None
+            else None
+        )
+
+        if liked_subq is not None:
+            stmt = (
+                select(Post, liked_subq)
+                .where(
+                    Post.workspace_id == workspace_id,
+                    Post.slug == slug,
+                    Post.deleted_at.is_(None),
+                    Post.status == PostStatus.PUBLISHED.value,
+                )
+                .options(
+                    selectinload(Post.category),
+                    selectinload(Post.tags),
+                    selectinload(Post.content),
+                )
+            )
+            row = (await session.execute(stmt)).one_or_none()
+            if row is None:
+                return None
+            post, liked = row
+            return post, bool(liked)
+
+        stmt = (
+            select(Post)
+            .where(
+                Post.workspace_id == workspace_id,
+                Post.slug == slug,
+                Post.deleted_at.is_(None),
+                Post.status == PostStatus.PUBLISHED.value,
+            )
+            .options(
+                selectinload(Post.category),
+                selectinload(Post.tags),
+                selectinload(Post.content),
+            )
+        )
+        post = (await session.execute(stmt)).scalar_one_or_none()
+        return (post, None) if post is not None else None
+
     async def find_by_slug(
         self,
         session: SessionType,
@@ -360,12 +428,7 @@ class PostVersionRepository(BaseSQLAlchemyRepository[PostVersion]):
         post_id: uuid.UUID,
     ) -> PostVersion | None:
         """Return the most recent version row for ``post_id``, or ``None``."""
-        stmt = (
-            select(PostVersion)
-            .where(PostVersion.post_id == post_id)
-            .order_by(PostVersion.version.desc())
-            .limit(1)
-        )
+        stmt = select(PostVersion).where(PostVersion.post_id == post_id).order_by(PostVersion.version.desc()).limit(1)
         return (await session.execute(stmt)).scalar_one_or_none()
 
     async def find_by_post_and_version(
@@ -443,9 +506,8 @@ class PostVersionRepository(BaseSQLAlchemyRepository[PostVersion]):
         post_id = data["post_id"]
 
         for attempt in range(POST_VERSION_INSERT_RETRY_LIMIT):
-            next_version_stmt = (
-                select(func.coalesce(func.max(PostVersion.version), 0) + 1)
-                .where(PostVersion.post_id == post_id)
+            next_version_stmt = select(func.coalesce(func.max(PostVersion.version), 0) + 1).where(
+                PostVersion.post_id == post_id
             )
             next_version = (await session.execute(next_version_stmt)).scalar_one()
 
@@ -547,11 +609,77 @@ class PostVersionRepository(BaseSQLAlchemyRepository[PostVersion]):
 class PostLikeRepository(BaseSQLAlchemyRepository[PostLike]):
     """Data access for :class:`PostLike`.
 
-    Method bodies land in Phase 3 (US1) of specs/003-post-likes-comments.
-    Phase 2 ships an empty subclass so the container can wire it.
+    All writes go through :meth:`add_idempotent` (FR-002 — unique
+    ``(post_id, user_id)`` resolved via ``ON CONFLICT DO NOTHING``); all
+    reads are by ``post_id`` (likers list, exists probe, counter
+    reconciliation).
     """
 
     model_type = PostLike
+
+    async def add_idempotent(
+        self,
+        session: SessionType,
+        *,
+        post_id: uuid.UUID,
+        user_id: uuid.UUID,
+        workspace_id: uuid.UUID,
+    ) -> bool:
+        """Insert a like row idempotently for ``(post_id, user_id)``.
+
+        Returns ``True`` iff a new row was inserted (counter ticked +1
+        via the PG trigger); ``False`` iff the like already existed.
+        """
+        stmt = (
+            pg_insert(PostLike)
+            .values(post_id=post_id, user_id=user_id, workspace_id=workspace_id)
+            .on_conflict_do_nothing(index_elements=["post_id", "user_id"])
+            .returning(PostLike.id)
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none() is not None
+
+    async def remove(
+        self,
+        session: SessionType,
+        *,
+        post_id: uuid.UUID,
+        user_id: uuid.UUID,
+    ) -> bool:
+        """Delete the like row for ``(post_id, user_id)`` if present.
+
+        Returns ``True`` iff a row was removed (counter ticked -1 via
+        the PG trigger); ``False`` iff no such row existed (no-op).
+        """
+        stmt = delete(PostLike).where(PostLike.post_id == post_id, PostLike.user_id == user_id).returning(PostLike.id)
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none() is not None
+
+    async def exists_for_user(
+        self,
+        session: SessionType,
+        *,
+        post_id: uuid.UUID,
+        user_id: uuid.UUID,
+    ) -> bool:
+        """Return whether the given user has liked ``post_id``."""
+        stmt = select(
+            exists().where(
+                PostLike.post_id == post_id,
+                PostLike.user_id == user_id,
+            ),
+        )
+        return bool((await session.execute(stmt)).scalar_one())
+
+    async def count_for_post(
+        self,
+        session: SessionType,
+        *,
+        post_id: uuid.UUID,
+    ) -> int:
+        """Return the authoritative like count for ``post_id`` (FR-026)."""
+        stmt = select(func.count()).select_from(PostLike).where(PostLike.post_id == post_id)
+        return int((await session.execute(stmt)).scalar_one())
 
 
 class PostCommentRepository(BaseSQLAlchemyRepository[PostComment]):
