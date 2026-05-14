@@ -42,6 +42,8 @@ from apps.blog.constants import (
     AUTOSAVE_SWEEPER_LEADER_KEY,
     AUTOSAVE_SWEEPER_LEADER_TTL,
     AUTOSAVE_TTL_SECONDS,
+    POST_COMMENT_MODERATION_SWEEPER_LEADER_KEY,
+    POST_COMMENT_MODERATION_SWEEPER_LEADER_TTL,
     POST_VERSION_SWEEPER_LEADER_KEY,
     POST_VERSION_SWEEPER_LEADER_TTL,
 )
@@ -419,6 +421,46 @@ class AutosaveStore:
         except Exception:
             logger.warning(
                 "AutosaveStore - release_version_sweeper_leadership - eval failed; relying on TTL",
+                token=token,
+            )
+
+    async def acquire_or_renew_comment_moderation_sweeper_leadership(
+        self,
+        *,
+        token: str,
+        ttl_seconds: int = POST_COMMENT_MODERATION_SWEEPER_LEADER_TTL,
+    ) -> bool:
+        """Leader-election for the comment-moderation retention sweeper.
+
+        Distinct from the autosave and post-version sweeper locks only in the
+        key it operates on. All three sweepers must hold independent leases so
+        a stalled cadence on one cannot starve the others.
+        """
+        if self._redis is None:
+            return False
+        result = await self._redis.client.eval(
+            _LEADER_ACQUIRE_OR_RENEW_SCRIPT,
+            1,
+            POST_COMMENT_MODERATION_SWEEPER_LEADER_KEY,
+            token,
+            str(ttl_seconds),
+        )
+        return bool(result)
+
+    async def release_comment_moderation_sweeper_leadership(self, *, token: str) -> None:
+        """Drop the moderation-sweeper leader lock iff this worker still owns it."""
+        if self._redis is None:
+            return
+        try:
+            await self._redis.client.eval(
+                _LOCK_RELEASE_SCRIPT,
+                1,
+                POST_COMMENT_MODERATION_SWEEPER_LEADER_KEY,
+                token,
+            )
+        except Exception:
+            logger.warning(
+                "AutosaveStore - release_comment_moderation_sweeper_leadership - eval failed; relying on TTL",
                 token=token,
             )
 

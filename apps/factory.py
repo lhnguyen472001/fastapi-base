@@ -24,8 +24,10 @@ from apps.blog.containers import BlogContainer
 from apps.blog.routes.admin import blog_admin_router
 from apps.blog.routes.public import blog_public_router
 from apps.blog.sweeper import (
+    start_comment_moderation_sweeper_task,
     start_post_version_sweeper_task,
     start_sweeper_task,
+    stop_comment_moderation_sweeper_task,
     stop_post_version_sweeper_task,
     stop_sweeper_task,
 )
@@ -108,6 +110,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         async_session_factory,
         autosave_store,
     )
+    # Retention sweeper for stale anonymous-comment pending rows
+    # (FR-010e). Hourly cadence by default; distinct Redis leader key so
+    # the three sweepers never block each other.
+    comment_moderation_sweeper_task = start_comment_moderation_sweeper_task(
+        async_session_factory,
+        autosave_store,
+    )
 
     logger.info("factory - lifespan - Application started")
     try:
@@ -116,6 +125,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         logger.info("factory - lifespan - Shutting down")
         await stop_sweeper_task(sweeper_task)
         await stop_post_version_sweeper_task(version_sweeper_task)
+        await stop_comment_moderation_sweeper_task(comment_moderation_sweeper_task)
         await AuthContainer.google_oauth_client().aclose()
         await close_redis_client()
 

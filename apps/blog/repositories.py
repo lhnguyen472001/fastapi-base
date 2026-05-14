@@ -1035,6 +1035,33 @@ class PostCommentRepository(BaseSQLAlchemyRepository[PostComment]):
         rows = list((await session.execute(page_stmt)).scalars().all())
         return rows, int(total)
 
+    async def delete_stale_pending(
+        self,
+        session: SessionType,
+        *,
+        cutoff: datetime.datetime,
+        limit: int,
+    ) -> int:
+        """Hard-delete up to ``limit`` ``state='pending'`` rows older than ``cutoff``.
+
+        Implements FR-010e (anonymous-comment moderation queue retention) per
+        research §11. The bounded subquery prevents an unbounded DELETE from
+        holding a long lock; ``ix_post_comments_workspace_pending`` (partial
+        index on pending rows) keeps the scan cheap.
+
+        Counter implication: zero. ``pending`` rows never contributed to
+        ``posts.comment_count``, so the DELETE trigger is also a no-op.
+        """
+        target_ids_subq = (
+            select(PostComment.id)
+            .where(PostComment.state == "pending", PostComment.created_at < cutoff)
+            .limit(limit)
+            .scalar_subquery()
+        )
+        stmt = delete(PostComment).where(PostComment.id.in_(target_ids_subq)).returning(PostComment.id)
+        result = await session.execute(stmt)
+        return len(result.scalars().all())
+
 
 class PostCommentModerationRepository(BaseSQLAlchemyRepository[PostComment]):
     """Data access for :class:`PostComment` from the moderator surface.

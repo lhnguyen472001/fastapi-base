@@ -448,6 +448,11 @@ class PostCommentService:
         if row.author_user_id is None:
             raise AnonymousAuthorImmutableError(message="Anonymous comments cannot be edited.")
         if row.author_user_id != current_user_id:
+            logger.warning(
+                "PostCommentService - edit_own - rejected non-author - comment_id={cid} caller={uid}",
+                cid=comment_id,
+                uid=current_user_id,
+            )
             raise CommentAuthorForbiddenError(message="Only the comment author can edit this comment.")
 
         now = datetime.datetime.now(tz=datetime.UTC)
@@ -500,6 +505,11 @@ class PostCommentService:
         if row.author_user_id is None:
             raise AnonymousAuthorImmutableError(message="Anonymous comments cannot be deleted by callers.")
         if row.author_user_id != current_user_id:
+            logger.warning(
+                "PostCommentService - delete_own - rejected non-author - comment_id={cid} caller={uid}",
+                cid=comment_id,
+                uid=current_user_id,
+            )
             raise CommentAuthorForbiddenError(message="Only the comment author can delete this comment.")
 
         is_top_level = row.parent_comment_id is None

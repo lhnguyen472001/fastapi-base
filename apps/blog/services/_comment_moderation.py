@@ -187,6 +187,12 @@ class PostCommentModerationService:
             post = await self._find_post_by_id_any_workspace(session, post_id=comment.post_id)
             if post is None or post.author_id != current_user_id:
                 msg = "Caller lacks moderation permission and is not the post author."
+                logger.warning(
+                    "PostCommentModerationService - moderator_delete - rejected unauthorized "
+                    "- comment_id={cid} caller={uid}",
+                    cid=comment_id,
+                    uid=current_user_id,
+                )
                 raise AccessDeniedError(message=msg)
 
         updated = await self.repository.mark_moderator_deleted(
