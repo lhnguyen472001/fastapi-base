@@ -1,6 +1,12 @@
-"""Thin async Google OAuth2 client built on httpx."""
+"""Thin async Google OAuth2 client built on httpx.
 
-from dataclasses import dataclass
+Implements :class:`apps.auth.protocols.OAuthProviderProtocol`. The
+provider-neutral userinfo dataclass lives in :mod:`apps.auth.protocols`
+as :class:`OAuthUserInfo`; ``GoogleUserInfo`` is kept here as an alias
+so existing imports (``from apps.auth.oauth import GoogleUserInfo``)
+keep working.
+"""
+
 from urllib.parse import urlencode
 
 import httpx
@@ -14,17 +20,12 @@ from apps.auth.constants import (
     GOOGLE_USERINFO_ENDPOINT,
 )
 from apps.auth.exceptions import OAuthProviderError
+from apps.auth.protocols import OAuthUserInfo
 
-
-@dataclass(slots=True, kw_only=True, frozen=True)
-class GoogleUserInfo:
-    """Subset of Google's userinfo response that we care about."""
-
-    sub: str
-    email: str
-    email_verified: bool
-    name: str | None
-    picture: str | None
+# Back-compat alias: legacy callers import ``GoogleUserInfo`` from this
+# module. The canonical type now lives on the protocol so non-Google
+# providers can return the same shape.
+GoogleUserInfo = OAuthUserInfo
 
 
 class GoogleOAuthClient:
@@ -81,7 +82,7 @@ class GoogleOAuthClient:
         }
         return f"{GOOGLE_AUTHORIZE_ENDPOINT}?{urlencode(params)}"
 
-    async def exchange_code(self, *, code: str, code_verifier: str) -> GoogleUserInfo:
+    async def exchange_code(self, *, code: str, code_verifier: str) -> OAuthUserInfo:
         """Exchange an authorization code for an access token + userinfo.
 
         Args:
@@ -145,7 +146,7 @@ class GoogleOAuthClient:
         if not sub or not email:
             raise OAuthProviderError(message="Google userinfo missing sub or email.")
 
-        return GoogleUserInfo(
+        return OAuthUserInfo(
             sub=sub,
             email=email,
             email_verified=bool(data.get("email_verified", False)),

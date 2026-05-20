@@ -2,11 +2,25 @@ from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import ORJSONResponse
 from loguru import logger
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from apps.core.schemas.response import JsonResponseStatuses, ResponseCodes
 from apps.settings import app_settings
 
 from .base import BackendError
+
+# Status-code → business error-code map. Codes outside this table fall back
+# to the generic 4xx / 5xx buckets so the envelope contract holds for any
+# HTTPException the framework or app code may raise.
+_HTTP_STATUS_TO_RESPONSE_CODE: dict[int, ResponseCodes] = {
+    400: ResponseCodes.API001,
+    401: ResponseCodes.API004,
+    403: ResponseCodes.API005,
+    404: ResponseCodes.API006,
+    409: ResponseCodes.API007,
+    422: ResponseCodes.API002,
+    429: ResponseCodes.API008,
+}
 
 
 def unhandled_exception_handler(_: Request, exc: Exception) -> ORJSONResponse:
@@ -58,6 +72,46 @@ def backend_exception_handler(_: Request, exc: BackendError) -> ORJSONResponse:
             "message": exc.message,
         },
         background=exc.background_task,
+    )
+
+
+def http_exception_handler(_: Request, exc: StarletteHTTPException) -> ORJSONResponse:
+    """Wrap framework-raised ``HTTPException`` in the standard ``APIResponse`` envelope.
+
+    Covers the cases that bypass :func:`backend_exception_handler`:
+
+    * Unknown routes (Starlette raises ``HTTPException(404)``).
+    * Disallowed methods on a known route (``HTTPException(405)``).
+    * Any code that raises ``fastapi.HTTPException`` / ``starlette.exceptions.HTTPException``
+      directly instead of a :class:`BackendError` subclass.
+
+    Without this handler the response body is the framework default
+    ``{"detail": "..."}`` shape, breaking the documented ``{code, data,
+    status, message}`` contract that every client parses.
+
+    Args:
+        _: FastAPI Request instance.
+        exc: The HTTPException raised by the framework or application.
+
+    Returns:
+        ORJSONResponse with APIResponse-shaped body and the original HTTP status.
+    """
+    code = _HTTP_STATUS_TO_RESPONSE_CODE.get(exc.status_code)
+    if code is None:
+        code = ResponseCodes.API003 if exc.status_code >= 500 else ResponseCodes.API001
+
+    status = JsonResponseStatuses.ERROR if exc.status_code >= 500 else JsonResponseStatuses.FAIL
+    message = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+
+    return ORJSONResponse(
+        status_code=exc.status_code,
+        content={
+            "code": code,
+            "data": None,
+            "status": status,
+            "message": message,
+        },
+        headers=getattr(exc, "headers", None),
     )
 
 

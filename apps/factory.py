@@ -17,6 +17,7 @@ from fastapi.responses import ORJSONResponse, RedirectResponse
 from loguru import logger
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from apps.auth.containers import AuthContainer
 from apps.auth.routes import auth_router
@@ -36,6 +37,7 @@ from apps.core.database.session import async_session_factory
 from apps.core.exceptions.base import BackendError
 from apps.core.exceptions.handlers import (
     backend_exception_handler,
+    http_exception_handler,
     unhandled_exception_handler,
     validation_exception_handler,
 )
@@ -47,7 +49,12 @@ from apps.core.redis import close_redis_client
 from apps.health.routes import health_router
 from apps.product.routes import product_category_router, product_router
 from apps.rbac.containers import RBACContainer
-from apps.rbac.enforcer import register_policy_count_gauge
+from apps.rbac.enforcer import (
+    register_heartbeat_counters,
+    register_policy_count_gauge,
+    start_rbac_enforcer_heartbeat_task,
+    stop_rbac_enforcer_heartbeat_task,
+)
 from apps.rbac.routes import rbac_router
 from apps.rbac.seeders import sync_registered_resources
 from apps.settings import app_settings
@@ -87,6 +94,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # policy-count gauge against it for F-SCALE-1 observability.
     enforcer = await RBACContainer.enforcer()
     register_policy_count_gauge(enforcer)
+    # CRITICAL-1 heartbeat: periodic load_policy() fallback so a silent
+    # pub/sub watcher drop cannot drift this worker's enforcer into a
+    # stale policy state. Cancelled in the finally block below.
+    heartbeat_success, heartbeat_failures = register_heartbeat_counters()
+    heartbeat_task = start_rbac_enforcer_heartbeat_task(
+        enforcer,
+        success_counter=heartbeat_success,
+        failure_counter=heartbeat_failures,
+    )
 
     if app_settings.rbac.auto_seed_resources_from_registry:
         async with async_session_factory() as seed_session, seed_session.begin():
@@ -123,6 +139,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         logger.info("factory - lifespan - Shutting down")
+        await stop_rbac_enforcer_heartbeat_task(heartbeat_task)
         await stop_sweeper_task(sweeper_task)
         await stop_post_version_sweeper_task(version_sweeper_task)
         await stop_comment_moderation_sweeper_task(comment_moderation_sweeper_task)
@@ -185,6 +202,9 @@ def application_factory() -> FastAPI:
         RequestValidationError,
         validation_exception_handler,  # type: ignore[arg-type]
     )
+    # Wrap framework HTTPException (404/405/manual raises) in APIResponse so
+    # clients always see the same {code,data,status,message} envelope.
+    app.add_exception_handler(StarletteHTTPException, http_exception_handler)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, unhandled_exception_handler)  # type: ignore[arg-type]
 
     # Routers ---------------------------------------------------------------

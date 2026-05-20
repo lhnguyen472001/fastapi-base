@@ -24,8 +24,9 @@ Usage::
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, ClassVar, Generic, Protocol, TypeVar
+from typing import Any, ClassVar, Protocol, TypeVar
 
+from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.sql import ColumnElement
 
 from apps.core.database.filters import StatementFilter
@@ -40,7 +41,7 @@ __all__ = [
 ]
 
 
-class ReaderProtocol(Protocol[SQLAlchemyModelT], Generic[SQLAlchemyModelT]):
+class ReaderProtocol[SQLAlchemyModelT: DeclarativeBase](Protocol):
     """Read-only repository surface."""
 
     async def get_one(
@@ -82,7 +83,7 @@ class ReaderProtocol(Protocol[SQLAlchemyModelT], Generic[SQLAlchemyModelT]):
     ) -> int: ...
 
 
-class WriterProtocol(Protocol[SQLAlchemyModelT], Generic[SQLAlchemyModelT]):
+class WriterProtocol[SQLAlchemyModelT: DeclarativeBase](Protocol):
     """Write-only repository surface."""
 
     async def add(
@@ -122,7 +123,7 @@ class WriterProtocol(Protocol[SQLAlchemyModelT], Generic[SQLAlchemyModelT]):
     ) -> Sequence[SQLAlchemyModelT] | None: ...
 
 
-class UpsertableProtocol(Protocol[SQLAlchemyModelT], Generic[SQLAlchemyModelT]):
+class UpsertableProtocol[SQLAlchemyModelT: DeclarativeBase](Protocol):
     """Repository surface for find-or-create / get-and-update flows."""
 
     async def get_or_upsert(

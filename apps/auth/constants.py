@@ -10,6 +10,14 @@ from __future__ import annotations
 from typing import Final
 
 BCRYPT_ROUNDS: Final[int] = 12
+
+# Per-batch row count for the offline TOTP key-rotation helper
+# (``apps.auth.security.otp.rotate_secret_storage``). Bounds the size of
+# each ``SELECT id, totp_secret FROM users WHERE id > :cursor LIMIT N``
+# read and the matching per-row UPDATE write so the rotation is gentle
+# on a live database. Tune up for one-shot maintenance windows, down
+# under hot-replica replication lag pressure.
+TOTP_ROTATION_BATCH_SIZE: Final[int] = 100
 OAUTH_STATE_COOKIE_NAME: Final[str] = "oauth_state"
 
 USER_CACHE_KEY_PREFIX: Final[str] = "auth:user"

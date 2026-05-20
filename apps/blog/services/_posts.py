@@ -1,8 +1,9 @@
 """Per-workspace post service: CRUD, status transitions, cached read.
 
-Autosave / flush_one / get_for_admin live on
-:class:`apps.blog.services._autosave._PostAutosaveMixin` so the host class
-stays under the per-class line budget.
+Autosave / flush / merged-read live on
+:class:`apps.blog.services._autosave_service.PostAutosaveService`; this
+service holds a thin facade to that collaborator so route call-sites
+keep their existing ``post_service.autosave(...)`` etc. shape.
 """
 
 from __future__ import annotations
@@ -10,55 +11,42 @@ from __future__ import annotations
 import datetime
 import uuid
 from collections.abc import Sequence
+from typing import Any
 
-from apps.blog.constants import (
-    EMPTY_TIPTAP_DOC,
-    MAX_TAGS_PER_POST,
-    POST_CACHE_DETAIL_TTL,
-    POST_CACHE_KEY_PREFIX,
-)
+from apps.blog.constants import EMPTY_TIPTAP_DOC
 from apps.blog.enums import PostStatus
 from apps.blog.exceptions import (
-    BlogResourceWorkspaceMismatchError,
     PostInvalidStatusTransitionError,
     PostNotFoundError,
-    PostSlugConflictError,
-    PostTooManyTagsError,
 )
-from apps.blog.models import Post, PostContent
+from apps.blog.models import Post
 from apps.blog.repositories import (
-    CategoryRepository,
-    PostContentRepository,
     PostRepository,
     PostTagRepository,
-    PostVersionRepository,
-    TagRepository,
 )
 from apps.blog.schemas import (
-    CategoryResponse,
     CreatePostRequest,
     ListPostsRequest,
     PostDetailResponse,
-    PostResponse,
-    TagResponse,
     UpdatePostRequest,
 )
-from apps.blog.services._autosave import _PostAutosaveMixin
-from apps.blog.store import AutosaveStore
+from apps.blog.services._autosave_service import PostAutosaveService
+from apps.blog.services._cache import PostCacheService
+from apps.blog.services._content_writer import PostContentWriterService
+from apps.blog.services._detail import build_post_detail
+from apps.blog.services._validation import PostValidationService
 from apps.blog.utils import (
     compress_content_json_async,
-    compute_content_artifacts_async,
     ensure_publish_ready,
     normalize_slug,
 )
 from apps.core.database.transactional import transactional
 from apps.core.database.types import SessionType
 from apps.core.database.utils import slugify
-from apps.core.redis import CacheManager
 from apps.core.services.base import BaseSQLAlchemyService
 
 
-class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
+class PostService(BaseSQLAlchemyService[Post]):
     """Per-workspace post CRUD plus the Tiptap content pipeline."""
 
     repository: PostRepository
@@ -66,22 +54,18 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
     def __init__(
         self,
         repository: PostRepository,
-        content_repository: PostContentRepository,
         post_tag_repository: PostTagRepository,
-        category_repository: CategoryRepository,
-        tag_repository: TagRepository,
-        post_version_repository: PostVersionRepository,
-        cache: CacheManager,
-        autosave_store: AutosaveStore,
+        validation_service: PostValidationService,
+        content_writer: PostContentWriterService,
+        cache_service: PostCacheService,
+        autosave_service: PostAutosaveService,
     ) -> None:
         super().__init__(repository)
-        self.content_repository = content_repository
         self.post_tag_repository = post_tag_repository
-        self.category_repository = category_repository
-        self.tag_repository = tag_repository
-        self.post_version_repository = post_version_repository
-        self.cache = cache
-        self.autosave_store = autosave_store
+        self.validation_service = validation_service
+        self.content_writer = content_writer
+        self.cache_service = cache_service
+        self.autosave_service = autosave_service
 
     # ------------------------------------------------------------------
     # create
@@ -96,22 +80,47 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
         author_id: uuid.UUID,
         data: CreatePostRequest,
     ) -> Post:
+        """Create a draft post, its content row, and the first version snapshot.
+
+        Multi-statement write wrapped in ``@transactional``: the post,
+        ``post_contents`` row, optional tag links, and the initial
+        ``post_versions`` snapshot all commit atomically. Computes
+        ``content_html`` / ``content_text`` / ``content_hash`` / word
+        count / reading minutes from the Tiptap doc at this point so the
+        list-published query can paginate without re-rendering.
+
+        Args:
+            session: Active async session.
+            workspace_id: Owning workspace.
+            author_id: Authoring user.
+            data: Validated request body.
+
+        Returns:
+            The persisted :class:`Post` (re-fetched with category + tags loaded).
+
+        Raises:
+            PostSlugConflictError: Slug already in use within the workspace.
+            PostCategoryNotFoundError: ``data.category_id`` does not exist.
+            PostTagsNotFoundError: One or more ``data.tag_ids`` do not exist.
+            PostTooManyTagsError: ``data.tag_ids`` exceeds ``MAX_TAGS_PER_POST``.
+        """
         slug = normalize_slug(data.slug or slugify(data.title))
-        await self._ensure_slug_available(session, workspace_id=workspace_id, slug=slug)
+        await self.validation_service.ensure_slug_available(
+            session, workspace_id=workspace_id, slug=slug,
+        )
 
         if data.category_id is not None:
-            await self._validate_category(session, workspace_id=workspace_id, category_id=data.category_id)
-        if len(data.tag_ids) > MAX_TAGS_PER_POST:
-            raise PostTooManyTagsError(
-                message=f"At most {MAX_TAGS_PER_POST} tags allowed per post.",
+            await self.validation_service.validate_category(
+                session, workspace_id=workspace_id, category_id=data.category_id,
             )
+        self.validation_service.enforce_tag_count(data.tag_ids)
         if data.tag_ids:
-            await self._validate_tags(session, workspace_id=workspace_id, tag_ids=data.tag_ids)
+            await self.validation_service.validate_tags(
+                session, workspace_id=workspace_id, tag_ids=data.tag_ids,
+            )
 
         content_json = data.content_json or dict(EMPTY_TIPTAP_DOC)
-        content_text, content_html, content_hash, word_count, reading_minutes = await compute_content_artifacts_async(
-            content_json,
-        )
+        artifacts = await self.content_writer.compute_artifacts(content_json)
 
         post = Post(
             workspace_id=workspace_id,
@@ -123,22 +132,23 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
             cover_image_url=data.cover_image_url,
             status=PostStatus.DRAFT.value,
             published_at=None,
-            reading_minutes=reading_minutes,
-            word_count=word_count,
+            reading_minutes=artifacts.reading_minutes,
+            word_count=artifacts.word_count,
             hero_quote=data.hero_quote.model_dump(mode="json") if data.hero_quote is not None else None,
             meta_title=data.meta_title,
             meta_description=data.meta_description,
-            content_hash=content_hash,
+            content_hash=artifacts.content_hash,
         )
         post = await self.repository.add(session, post, expunge=False)
 
-        content_row = PostContent(
-            post_id=post.id,
+        await self.content_writer.write_initial(
+            session,
+            post=post,
             content_json=content_json,
-            content_html=content_html,
-            content_text=content_text,
+            artifacts=artifacts,
+            workspace_id=workspace_id,
+            author_id=author_id,
         )
-        await self.content_repository.add(session, content_row, expunge=False)
 
         if data.tag_ids:
             await self.post_tag_repository.replace_post_tags(
@@ -146,23 +156,6 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
                 post_id=post.id,
                 tag_ids=data.tag_ids,
             )
-
-        await self.post_version_repository.add_with_retry(
-            session,
-            data={
-                "post_id": post.id,
-                "workspace_id": workspace_id,
-                "title": post.title,
-                "content_json_compressed": await compress_content_json_async(content_json),
-                "content_text": content_text,
-                "content_hash": content_hash,
-                "created_by": author_id,
-                "change_note": None,
-                "is_published_snapshot": False,
-                "is_restored": False,
-                "status_at_save": post.status,
-            },
-        )
 
         return await self._reload(session, workspace_id=workspace_id, post_id=post.id)
 
@@ -178,6 +171,24 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
         post_id: uuid.UUID,
         load_content: bool = False,
     ) -> Post:
+        """Fetch a post by id within ``workspace_id`` or raise :class:`PostNotFoundError`.
+
+        Args:
+            session: Active async session.
+            workspace_id: Workspace scope (cross-workspace lookups go through
+                :meth:`PostRepository.find_by_id_any_workspace` and the
+                RBAC-gated moderation paths).
+            post_id: Post id.
+            load_content: When True, eager-loads the ``post_contents`` row
+                via ``selectinload`` — pay for it only when the caller will
+                read ``post.content``.
+
+        Returns:
+            The hydrated :class:`Post`.
+
+        Raises:
+            PostNotFoundError: No row matches in this workspace.
+        """
         post = await self.repository.find_by_id(
             session,
             workspace_id=workspace_id,
@@ -195,6 +206,23 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
         workspace_id: uuid.UUID,
         slug: str,
     ) -> Post:
+        """Return the published post for ``slug`` with content eagerly loaded.
+
+        Used by the public reader path. Soft-deleted and non-published
+        posts are excluded so unpublishing a post hides it immediately
+        from the public surface.
+
+        Args:
+            session: Active async session.
+            workspace_id: Owning workspace.
+            slug: URL slug.
+
+        Returns:
+            The published :class:`Post` (with ``post.content`` populated).
+
+        Raises:
+            PostNotFoundError: No published row matches the slug.
+        """
         post = await self.repository.find_by_slug(
             session,
             workspace_id=workspace_id,
@@ -214,14 +242,13 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
         slug: str,
     ) -> PostDetailResponse:
         """Read-through cache for the public detail response."""
-        cache_key = await self._cache_key_detail(workspace_id, slug)
-        cached = await self.cache.get(cache_key)
+        cached = await self.cache_service.get_detail(workspace_id, slug)
         if cached is not None:
             return PostDetailResponse.model_validate(cached)
 
         post = await self.get_published_by_slug(session, workspace_id=workspace_id, slug=slug)
-        detail = self._build_detail(post)
-        await self.cache.set(cache_key, detail.model_dump(mode="json"), ttl=POST_CACHE_DETAIL_TTL)
+        detail = build_post_detail(post)
+        await self.cache_service.put_detail(workspace_id, slug, detail.model_dump(mode="json"))
         return detail
 
     async def list_posts(
@@ -231,6 +258,23 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
         workspace_id: uuid.UUID,
         params: ListPostsRequest,
     ) -> tuple[list[Post], int]:
+        """Workspace-scoped, paginated post list with optional filters.
+
+        Hits the composite ``ix_posts_workspace_status_published_at``
+        index when ``status`` is constrained. Returns the same shape used
+        by the admin list endpoint.
+
+        Args:
+            session: Active async session.
+            workspace_id: Owning workspace.
+            params: Filter + pagination payload (``status``,
+                ``category_id``, ``tag_id``, ``search``, ``limit``,
+                ``offset``).
+
+        Returns:
+            ``(rows, total)`` where ``total`` is the count under the
+            same filter (independent of ``limit`` / ``offset``).
+        """
         return await self.repository.list_for_workspace(
             session,
             workspace_id=workspace_id,
@@ -255,6 +299,34 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
         post_id: uuid.UUID,
         data: UpdatePostRequest,
     ) -> Post:
+        """Apply a partial update to a post; the authoritative save path.
+
+        Multi-statement write wrapped in ``@transactional``. Normalises
+        the slug, validates category / tags / hero-quote, recomputes
+        content artifacts (and skips the rewrite when ``content_hash``
+        hasn't changed), persists tag links, then discards any pending
+        autosave and invalidates the workspace cache — PATCH is the
+        canonical save, so a stale Redis autosave from before the PATCH
+        must not overwrite the commit on the next sweeper tick.
+
+        Args:
+            session: Active async session.
+            workspace_id: Owning workspace.
+            post_id: Post id.
+            data: Validated partial-update payload (``exclude_unset``
+                semantics).
+
+        Returns:
+            The reloaded :class:`Post` with category + tags + content
+            populated.
+
+        Raises:
+            PostNotFoundError: ``post_id`` not in this workspace.
+            PostSlugConflictError: New slug collides with another post.
+            PostCategoryNotFoundError / PostTagsNotFoundError /
+                PostTooManyTagsError: validation failures on the
+                respective fields.
+        """
         post = await self.find_or_raise(
             session,
             workspace_id=workspace_id,
@@ -284,8 +356,12 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
         reloaded = await self._reload(session, workspace_id=workspace_id, post_id=post.id)
         # PATCH is the authoritative save: discard any pending autosave so
         # we don't overwrite this commit with stale Redis state on the next sweeper tick.
-        await self.autosave_store.discard(post_id)
-        await self._invalidate_workspace_cache(workspace_id)
+        await self.autosave_service.autosave_store.discard(post_id)
+        await self.cache_service.invalidate_workspace(workspace_id)
+        # MED-2: drop every cached render for this post so the next fetch
+        # re-renders from the new authoritative content_hash immediately
+        # rather than serving a stale entry until POST_RENDER_CACHE_TTL_SECONDS.
+        await self.cache_service.invalidate_render(post.id)
         return reloaded
 
     async def _resolve_update_payload(
@@ -304,7 +380,7 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
         """
         if "slug" in payload and payload["slug"] is not None:
             new_slug = normalize_slug(payload["slug"])
-            await self._ensure_slug_available(
+            await self.validation_service.ensure_slug_available(
                 session,
                 workspace_id=workspace_id,
                 slug=new_slug,
@@ -313,7 +389,7 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
             payload["slug"] = new_slug
 
         if "category_id" in payload and payload["category_id"] is not None:
-            await self._validate_category(
+            await self.validation_service.validate_category(
                 session,
                 workspace_id=workspace_id,
                 category_id=payload["category_id"],
@@ -321,12 +397,9 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
 
         new_tag_ids: list[uuid.UUID] | None = payload.pop("tag_ids", None)
         if new_tag_ids is not None:
-            if len(new_tag_ids) > MAX_TAGS_PER_POST:
-                raise PostTooManyTagsError(
-                    message=f"At most {MAX_TAGS_PER_POST} tags allowed per post.",
-                )
+            self.validation_service.enforce_tag_count(new_tag_ids)
             if new_tag_ids:
-                await self._validate_tags(
+                await self.validation_service.validate_tags(
                     session,
                     workspace_id=workspace_id,
                     tag_ids=new_tag_ids,
@@ -348,39 +421,16 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
         new_content = payload.pop("content_json", None)
         if new_content is None:
             return
-
-        content_text, content_html, content_hash, word_count, reading_minutes = await compute_content_artifacts_async(
-            new_content,
+        artifacts = await self.content_writer.update_content_if_changed(
+            session,
+            post=post,
+            new_content_json=new_content,
         )
-        if content_hash == post.content_hash:
+        if artifacts is None:
             return
-
-        payload["content_hash"] = content_hash
-        payload["word_count"] = word_count
-        payload["reading_minutes"] = reading_minutes
-
-        existing_content = post.content
-        if existing_content is None:
-            await self.content_repository.add(
-                session,
-                PostContent(
-                    post_id=post.id,
-                    content_json=new_content,
-                    content_html=content_html,
-                    content_text=content_text,
-                ),
-                expunge=False,
-            )
-        else:
-            await self.content_repository.update(
-                session,
-                item_id=existing_content.id,
-                data={
-                    "content_json": new_content,
-                    "content_html": content_html,
-                    "content_text": content_text,
-                },
-            )
+        payload["content_hash"] = artifacts.content_hash
+        payload["word_count"] = artifacts.word_count
+        payload["reading_minutes"] = artifacts.reading_minutes
 
     @transactional
     async def publish(
@@ -392,7 +442,7 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
     ) -> Post:
         # Flush any pending autosave first so the published version
         # reflects the most recent keystrokes the editor saw.
-        await self.flush_one(session, workspace_id=workspace_id, post_id=post_id)
+        await self.autosave_service.flush_one(session, workspace_id=workspace_id, post_id=post_id)
 
         post = await self.find_or_raise(
             session,
@@ -421,25 +471,20 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
         # but with ``status_at_save=published`` so the retention sweeper
         # keeps it forever.
         if post.content is not None:
-            await self.post_version_repository.add_with_retry(
+            await self.content_writer.persist_snapshot(
                 session,
-                data={
-                    "post_id": post.id,
-                    "workspace_id": workspace_id,
-                    "title": post.title,
-                    "content_json_compressed": await compress_content_json_async(post.content.content_json),
-                    "content_text": post.content.content_text,
-                    "content_hash": post.content_hash or "",
-                    "created_by": post.author_id,
-                    "change_note": None,
-                    "is_published_snapshot": True,
-                    "is_restored": False,
-                    "status_at_save": PostStatus.PUBLISHED.value,
-                },
+                post=post,
+                workspace_id=workspace_id,
+                content_text=post.content.content_text,
+                content_hash=post.content_hash or "",
+                content_json_compressed=await compress_content_json_async(post.content.content_json),
+                created_by=post.author_id,
+                is_published_snapshot=True,
+                status_at_save=PostStatus.PUBLISHED.value,
             )
 
         reloaded = await self._reload(session, workspace_id=workspace_id, post_id=post_id)
-        await self._invalidate_workspace_cache(workspace_id)
+        await self.cache_service.invalidate_workspace(workspace_id)
         return reloaded
 
     @transactional
@@ -461,7 +506,7 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
             data={"status": PostStatus.DRAFT.value, "published_at": None},
         )
         reloaded = await self._reload(session, workspace_id=workspace_id, post_id=post_id)
-        await self._invalidate_workspace_cache(workspace_id)
+        await self.cache_service.invalidate_workspace(workspace_id)
         return reloaded
 
     @transactional
@@ -481,7 +526,7 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
             data={"status": PostStatus.ARCHIVED.value},
         )
         reloaded = await self._reload(session, workspace_id=workspace_id, post_id=post_id)
-        await self._invalidate_workspace_cache(workspace_id)
+        await self.cache_service.invalidate_workspace(workspace_id)
         return reloaded
 
     @transactional
@@ -500,65 +545,71 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
         )
         if deleted is None:
             raise PostNotFoundError(message=f"Post '{post_id}' not found.")
-        await self._invalidate_workspace_cache(workspace_id)
+        await self.cache_service.invalidate_workspace(workspace_id)
         return deleted
+
+    # ------------------------------------------------------------------
+    # autosave facades — delegate to :class:`PostAutosaveService` so the
+    # route call-sites (``post_service.autosave(...)`` etc.) keep their
+    # existing shape after Phase B.5 promoted the mixin to a service.
+    # ------------------------------------------------------------------
+
+    async def autosave(
+        self,
+        session: SessionType,
+        *,
+        workspace_id: uuid.UUID,
+        post_id: uuid.UUID,
+        author_id: uuid.UUID,
+        content_json: dict[str, Any],
+    ) -> tuple[str, int, int, datetime.datetime, bool]:
+        """Forward to :meth:`PostAutosaveService.autosave`."""
+        return await self.autosave_service.autosave(
+            session,
+            workspace_id=workspace_id,
+            post_id=post_id,
+            author_id=author_id,
+            content_json=content_json,
+        )
+
+    async def flush_one(
+        self,
+        session: SessionType,
+        *,
+        workspace_id: uuid.UUID,
+        post_id: uuid.UUID,
+    ) -> Post | None:
+        """Forward to :meth:`PostAutosaveService.flush_one`."""
+        return await self.autosave_service.flush_one(
+            session,
+            workspace_id=workspace_id,
+            post_id=post_id,
+        )
+
+    async def get_for_admin(
+        self,
+        session: SessionType,
+        *,
+        workspace_id: uuid.UUID,
+        post_id: uuid.UUID,
+    ) -> PostDetailResponse:
+        """Admin-side detail read; merges any unflushed autosave snapshot."""
+        post = await self.find_or_raise(
+            session,
+            workspace_id=workspace_id,
+            post_id=post_id,
+            load_content=True,
+        )
+        base_detail = build_post_detail(post)
+        return await self.autosave_service.merge_dirty_snapshot_into_detail(
+            workspace_id=workspace_id,
+            post_id=post_id,
+            base_detail=base_detail,
+        )
 
     # ------------------------------------------------------------------
     # internals
     # ------------------------------------------------------------------
-
-    async def _ensure_slug_available(
-        self,
-        session: SessionType,
-        *,
-        workspace_id: uuid.UUID,
-        slug: str,
-        exclude_id: uuid.UUID | None = None,
-    ) -> None:
-        existing = await self.repository.find_by_slug(
-            session,
-            workspace_id=workspace_id,
-            slug=slug,
-            exclude_id=exclude_id,
-        )
-        if existing is not None:
-            raise PostSlugConflictError(message=f"Post slug '{slug}' already exists.")
-
-    async def _validate_category(
-        self,
-        session: SessionType,
-        *,
-        workspace_id: uuid.UUID,
-        category_id: uuid.UUID,
-    ) -> None:
-        category = await self.category_repository.find_by_id(
-            session,
-            workspace_id=workspace_id,
-            category_id=category_id,
-        )
-        if category is None:
-            raise BlogResourceWorkspaceMismatchError(
-                message=f"Category '{category_id}' not found in this workspace.",
-            )
-
-    async def _validate_tags(
-        self,
-        session: SessionType,
-        *,
-        workspace_id: uuid.UUID,
-        tag_ids: Sequence[uuid.UUID],
-    ) -> None:
-        found = await self.tag_repository.list_by_ids(
-            session,
-            workspace_id=workspace_id,
-            tag_ids=tag_ids,
-        )
-        found_ids = {tag.id for tag in found}
-        missing = [tid for tid in tag_ids if tid not in found_ids]
-        if missing:
-            raise BlogResourceWorkspaceMismatchError(
-                message=f"Tags {missing} not found in this workspace.",
-            )
 
     async def _reload(
         self,
@@ -578,45 +629,3 @@ class PostService(_PostAutosaveMixin, BaseSQLAlchemyService[Post]):
             raise PostNotFoundError(message=f"Post '{post_id}' not found after write.")
         return reloaded
 
-    # ------------------------------------------------------------------
-    # cache helpers (versioned-prefix invalidation)
-    # ------------------------------------------------------------------
-    #
-    # Cached entries embed a per-workspace generation counter: every
-    # invalidation is a single ``INCR`` on that counter, which orphans
-    # every previously-cached key under the old prefix and lets them
-    # expire via their existing TTL. Reads pay one extra ``GET`` to
-    # resolve the current generation; writes drop from O(workspace
-    # cache size) ``SCAN`` + batched DELETE to O(1) ``INCR``.
-
-    @staticmethod
-    def _cache_key_workspace_gen(workspace_id: uuid.UUID) -> str:
-        """Counter key whose value is the current cache generation."""
-        return f"{POST_CACHE_KEY_PREFIX}:ws:{workspace_id}:gen"
-
-    async def _workspace_cache_gen(self, workspace_id: uuid.UUID) -> int:
-        """Read the current generation; ``0`` when missing or Redis is off."""
-        return await self.cache.get_int(self._cache_key_workspace_gen(workspace_id))
-
-    async def _cache_key_detail(self, workspace_id: uuid.UUID, slug: str) -> str:
-        """Key for a single published-post detail response (gen-versioned)."""
-        gen = await self._workspace_cache_gen(workspace_id)
-        return f"{POST_CACHE_KEY_PREFIX}:ws:{workspace_id}:v{gen}:slug:{slug}"
-
-    async def _invalidate_workspace_cache(self, workspace_id: uuid.UUID) -> None:
-        """Bump the per-workspace generation, abandoning every prior entry."""
-        await self.cache.incr(self._cache_key_workspace_gen(workspace_id))
-
-    @staticmethod
-    def _build_detail(post: Post) -> PostDetailResponse:
-        """Render an ORM :class:`Post` into a :class:`PostDetailResponse`."""
-        base = PostResponse.model_validate(post).model_dump()
-        content = post.content
-        return PostDetailResponse(
-            **base,
-            content_json=content.content_json if content is not None else dict(EMPTY_TIPTAP_DOC),
-            content_html=content.content_html if content is not None else "",
-            content_text=content.content_text if content is not None else "",
-            category=CategoryResponse.model_validate(post.category) if post.category is not None else None,
-            tags=[TagResponse.model_validate(tag) for tag in post.tags],
-        )

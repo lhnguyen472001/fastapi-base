@@ -24,6 +24,10 @@ from apps.blog.services import (
     PostVersionService,
     TagService,
 )
+from apps.blog.services._autosave_service import PostAutosaveService
+from apps.blog.services._cache import PostCacheService
+from apps.blog.services._content_writer import PostContentWriterService
+from apps.blog.services._validation import PostValidationService
 from apps.blog.store import AutosaveStore
 from apps.core.redis import CacheManager, get_redis_client
 
@@ -34,6 +38,9 @@ class BlogContainer(containers.DeclarativeContainer):
     wiring_config = containers.WiringConfiguration(
         modules=[
             "apps.blog.routes.admin",
+            "apps.blog.routes.admin._taxonomy",
+            "apps.blog.routes.admin._posts",
+            "apps.blog.routes.admin._comments",
             "apps.blog.routes.public",
         ],
     )
@@ -50,12 +57,49 @@ class BlogContainer(containers.DeclarativeContainer):
         redis_client=providers.Callable(get_redis_client),
     )
 
+    # Domain cache facade — wraps cache_manager with the per-workspace
+    # generation-counter key scheme used by PostService and the autosave
+    # service (Phase B.2 — extracted from PostService.__init__).
+    post_cache_service = providers.Factory(PostCacheService, cache=cache_manager)
+
     category_repository = providers.Factory(CategoryRepository)
     tag_repository = providers.Factory(TagRepository)
     post_repository = providers.Factory(PostRepository)
     post_content_repository = providers.Factory(PostContentRepository)
     post_tag_repository = providers.Factory(PostTagRepository)
     post_version_repository = providers.Factory(PostVersionRepository)
+
+    # Workspace-scoped validation guards (slug uniqueness, category /
+    # tag existence + count cap). Extracted from PostService in Phase
+    # B.3 so the post service no longer takes category_repository or
+    # tag_repository directly.
+    post_validation_service = providers.Factory(
+        PostValidationService,
+        category_repository=category_repository,
+        tag_repository=tag_repository,
+        post_repository=post_repository,
+    )
+
+    # Owns every write into post_contents and post_versions (Phase B.4
+    # — extracted from PostService.create / .publish / ._apply_content_change
+    # and the autosave mixin's flush_one + _write_post_version).
+    post_content_writer_service = providers.Factory(
+        PostContentWriterService,
+        content_repository=post_content_repository,
+        post_version_repository=post_version_repository,
+    )
+
+    # Standalone autosave flow (Phase B.5 — promoted from the autosave
+    # mixin). PostService now injects this as a peer collaborator and
+    # surfaces 3 thin facade methods (``autosave`` / ``flush_one`` /
+    # ``get_for_admin``) so route call-sites are unchanged.
+    post_autosave_service = providers.Factory(
+        PostAutosaveService,
+        post_repository=post_repository,
+        content_writer=post_content_writer_service,
+        cache_service=post_cache_service,
+        autosave_store=autosave_store,
+    )
     # F-MAINT-1: declared as an external dependency so AppContainer wires
     # it from ``UserContainer.user_repository`` — no direct import of
     # ``apps.user.*`` from this module. The runtime payload type is
@@ -74,13 +118,11 @@ class BlogContainer(containers.DeclarativeContainer):
     post_service = providers.Factory(
         PostService,
         repository=post_repository,
-        tag_repository=tag_repository,
-        content_repository=post_content_repository,
         post_tag_repository=post_tag_repository,
-        category_repository=category_repository,
-        post_version_repository=post_version_repository,
-        cache=cache_manager,
-        autosave_store=autosave_store,
+        validation_service=post_validation_service,
+        content_writer=post_content_writer_service,
+        cache_service=post_cache_service,
+        autosave_service=post_autosave_service,
     )
     post_version_service = providers.Factory(
         PostVersionService,

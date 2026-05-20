@@ -12,20 +12,17 @@ directly.
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING
 
 from loguru import logger
 
 from apps.blog.enums import PostStatus
 from apps.blog.exceptions import PostEngagementClosedError, PostNotFoundError
+from apps.blog.models import Post
 from apps.blog.repositories import PostLikeRepository, PostRepository
 from apps.blog.schemas import LikerResponse, LikeState
 from apps.core.database.transactional import transactional
+from apps.core.database.types import SessionType
 from apps.core.schemas.response import PaginatedResponse
-
-if TYPE_CHECKING:
-    from apps.blog.models import Post
-    from apps.core.database.types import SessionType
 
 
 class PostLikeService:

@@ -23,20 +23,21 @@ from methods that will also be called by another service.
 """
 
 from collections.abc import Sequence
-from typing import Any, Generic
+from typing import Any
 
+from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.sql.elements import ColumnElement
 
 from apps.core.database.filters import StatementFilter
 from apps.core.database.repository import SQLAlchemyRepositoryProtocol
 from apps.core.database.transactional import transactional
-from apps.core.database.types import SessionType, SQLAlchemyModelT
+from apps.core.database.types import SessionType
 from apps.core.exceptions.base import BackendError
 from apps.core.schemas.base import SchemaT
 from apps.core.services.utils import ResultConverter
 
 
-class BaseSQLAlchemyService(ResultConverter, Generic[SQLAlchemyModelT]):
+class BaseSQLAlchemyService[SQLAlchemyModelT: DeclarativeBase](ResultConverter):
     """Base service class for all services."""
 
     repository: SQLAlchemyRepositoryProtocol[SQLAlchemyModelT]
@@ -73,7 +74,7 @@ class BaseSQLAlchemyService(ResultConverter, Generic[SQLAlchemyModelT]):
         return instance
 
 
-class SQLAlchemyReadService(BaseSQLAlchemyService[SQLAlchemyModelT], Generic[SQLAlchemyModelT]):  # type: ignore[type-arg]
+class SQLAlchemyReadService[SQLAlchemyModelT: DeclarativeBase](BaseSQLAlchemyService[SQLAlchemyModelT]):
     """Read-only SQLAlchemy service."""
 
     async def get_by_id(
@@ -191,7 +192,7 @@ class SQLAlchemyReadService(BaseSQLAlchemyService[SQLAlchemyModelT], Generic[SQL
         return self.to_schema(results, schema_type=schema_type), count
 
 
-class SQLAlchemyWriteService(BaseSQLAlchemyService[SQLAlchemyModelT]):  # type: ignore[type-arg]
+class SQLAlchemyWriteService[SQLAlchemyModelT: DeclarativeBase](BaseSQLAlchemyService[SQLAlchemyModelT]):
     """Write-only SQLAlchemy service."""
 
     @transactional
@@ -382,9 +383,8 @@ class SQLAlchemyWriteService(BaseSQLAlchemyService[SQLAlchemyModelT]):  # type: 
         return await self.repository.delete_where(session, *filters, **kwargs)
 
 
-class SQLAlchemyService(
+class SQLAlchemyService[SQLAlchemyModelT: DeclarativeBase](
     SQLAlchemyReadService[SQLAlchemyModelT],
     SQLAlchemyWriteService[SQLAlchemyModelT],
-    Generic[SQLAlchemyModelT],
 ):
     """SQLAlchemy service that combines read and write operations."""

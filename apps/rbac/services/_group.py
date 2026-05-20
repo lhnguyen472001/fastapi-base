@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.core.database.transactional import transactional
 from apps.core.services.base import SQLAlchemyService
 from apps.rbac import _metrics
+from apps.rbac.constants import RBAC_GROUP_ROLE_FANOUT_BATCH_SIZE
 from apps.rbac.exceptions import (
     GroupNotFoundError,
     RBACConflictError,
@@ -220,8 +221,25 @@ class GroupService(SQLAlchemyService[Group]):
         except IntegrityError as exc:
             raise RBACConflictError(message="Role already assigned to this group.") from exc
 
-        member_ids = await self.user_group_repository.list_active_user_ids(session, group_id=group_id)
-        rules = [[user_sub(member_id), role_sub(role_id)] for member_id in member_ids]
+        # Page through active members so a 100k-member group does not
+        # allocate the full id list in one DB roundtrip. The accumulated
+        # ``rules`` list is still handed to Casbin in one call, so the
+        # commit-then-policy-sync compensation contract is unchanged.
+        rules: list[list[str]] = []
+        offset = 0
+        while True:
+            batch = await self.user_group_repository.list_active_user_ids(
+                session,
+                group_id=group_id,
+                limit=RBAC_GROUP_ROLE_FANOUT_BATCH_SIZE,
+                offset=offset,
+            )
+            if not batch:
+                break
+            rules.extend([user_sub(member_id), role_sub(role_id)] for member_id in batch)
+            if len(batch) < RBAC_GROUP_ROLE_FANOUT_BATCH_SIZE:
+                break
+            offset += RBAC_GROUP_ROLE_FANOUT_BATCH_SIZE
         return link, rules
 
     async def _compensate_user_group_drift(

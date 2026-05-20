@@ -20,6 +20,10 @@ keys/*.pem
 
 # Local tooling
 .serena/
+.claude/skills/
+
+# Analysis artifacts
+code_analysis.md
 
 # WIP notes
 docs/*.md

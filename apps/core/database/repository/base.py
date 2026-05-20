@@ -7,11 +7,11 @@ identity attributes and private helpers declared here.
 """
 
 from collections.abc import Iterable
-from typing import Any, ClassVar, Generic, Literal, cast, overload
+from typing import Any, ClassVar, Literal, cast, overload
 
 from sqlalchemy.engine import Dialect, Result
 from sqlalchemy.ext.asyncio import AsyncSession, async_scoped_session
-from sqlalchemy.orm import InstrumentedAttribute, selectinload
+from sqlalchemy.orm import DeclarativeBase, InstrumentedAttribute, selectinload
 from sqlalchemy.orm.strategy_options import _AbstractLoad
 from sqlalchemy.sql import (
     ColumnElement,
@@ -40,15 +40,13 @@ from apps.core.database.types import (
     ExecutableOptions,
     OrderingPair,
     SessionType,
-    SQLAlchemyModelT,
     StatementTypeT,
 )
 
 
-class BaseSQLAlchemyRepository(
+class BaseSQLAlchemyRepository[SQLAlchemyModelT: DeclarativeBase](
     _ReadRepositoryMixin[SQLAlchemyModelT],
     _WriteRepositoryMixin[SQLAlchemyModelT],
-    Generic[SQLAlchemyModelT],
 ):
     """Base repository class for all repositories.
 

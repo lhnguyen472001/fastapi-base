@@ -10,9 +10,9 @@ declared on :class:`BaseSQLAlchemyRepository`.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from typing import Any, Generic, cast
+from typing import Any, cast
 
-from sqlalchemy.orm import InstrumentedAttribute
+from sqlalchemy.orm import DeclarativeBase, InstrumentedAttribute
 from sqlalchemy.orm.strategy_options import _AbstractLoad
 from sqlalchemy.sql import ColumnElement, Select, exists, literal, select
 
@@ -22,11 +22,10 @@ from apps.core.database.types import (
     ExecutableOptions,
     OrderingPair,
     SessionType,
-    SQLAlchemyModelT,
 )
 
 
-class _ReadRepositoryMixin(Generic[SQLAlchemyModelT]):
+class _ReadRepositoryMixin[SQLAlchemyModelT: DeclarativeBase]:
     """Read methods extracted from BaseSQLAlchemyRepository.
 
     See module docstring for the host-class contract.

@@ -1,9 +1,10 @@
 import abc
 import datetime
 from collections.abc import Callable, Collection
-from typing import TYPE_CHECKING, Any, Generic, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import ConfigDict, dataclasses
+from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.sql import any_, not_, operators as ops, text
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.expression import Select
@@ -125,7 +126,7 @@ class InAnyFilter(StatementFilter, abc.ABC):
     kw_only=True,
     config=ConfigDict(arbitrary_types_allowed=True),
 )
-class CollectionFilter(InAnyFilter, Generic[SQLAlchemyModelT]):
+class CollectionFilter[SQLAlchemyModelT: DeclarativeBase](InAnyFilter):
     """Filter for checking if a field is in a collection of values."""
 
     field_name: str
@@ -168,7 +169,7 @@ class CollectionFilter(InAnyFilter, Generic[SQLAlchemyModelT]):
     kw_only=True,
     config=ConfigDict(arbitrary_types_allowed=True),
 )
-class NotInCollectionFilter(InAnyFilter, Generic[SQLAlchemyModelT]):
+class NotInCollectionFilter[SQLAlchemyModelT: DeclarativeBase](InAnyFilter):
     """Filter for checking if a field is not in a collection of values."""
 
     field_name: str

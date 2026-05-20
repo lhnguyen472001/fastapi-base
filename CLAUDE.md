@@ -114,7 +114,7 @@ class UserContainer(containers.DeclarativeContainer):
 
 ## Important
 
-- **RBAC / Casbin & multi-worker:** the Casbin enforcer is per-worker in-memory. Running with `uvicorn --workers >1` will cause stale-cache reads after policy mutations until each worker reloads. Stay on `--workers 1` until a Casbin watcher (e.g. Redis pub/sub) is wired in. See `apps/rbac/enforcer.py` warning.
+- **RBAC / Casbin & multi-worker:** the Casbin enforcer is per-worker in-memory. Running with `uvicorn --workers >1` will cause stale-cache reads after policy mutations until each worker reloads implement redis watcher to handle.
 - **Post-version retention sweeper:** the FastAPI lifespan starts a background `post_version_sweeper` task alongside the autosave sweeper. Both use leader-elected Redis locks (distinct keys), so any worker count is safe; with Redis off the sweeper exits cleanly and retention is not enforced. Tunables live in `apps/blog/constants.py` (`POST_VERSION_RETENTION_LIMIT`, `POST_VERSION_SWEEP_INTERVAL`, etc.). See `apps/blog/sweeper.py:post_version_sweeper`.
 - **Comment-moderation retention sweeper:** the FastAPI lifespan starts a background `comment_moderation_sweeper` task that hard-deletes anonymous `pending` comments older than `POST_COMMENT_MODERATION_PENDING_TTL_SECONDS` (FR-010e). Leader-elected via its own distinct Redis key (`blog:comment_moderation:sweeper:leader`), so any worker count is safe; with Redis off the sweeper exits cleanly and queue retention is best-effort. Counter-neutral by design — `pending` rows never contributed to `posts.comment_count`. Tunables live in `apps/blog/constants.py` (`POST_COMMENT_MODERATION_PENDING_TTL_SECONDS`, `POST_COMMENT_MODERATION_SWEEP_INTERVAL`, etc.). See `apps/blog/sweeper.py:comment_moderation_sweeper`.
 - **Imports:** Use `apps.*` prefix for all local imports (e.g., `from apps.core.database.engine import ...`)
@@ -129,6 +129,7 @@ class UserContainer(containers.DeclarativeContainer):
   - If a service mutates fields on a loaded model from another aggregate, inject that aggregate's repository (e.g. `user_repository: UserRepository`) and call its `update(item_id, data=dict)`. Do not reach for the session as a shortcut.
 
   Raw SQL / `session.execute(select(...))` and similar query construction belongs inside repository methods only — never in services.
+
 - **DI:** Use `@inject` + `Depends(Provide[Container.service])` — never manually instantiate services in routes
 - **Transactions:** Use `@Transactional()` decorator in services for multi-statement writes
 - **Filters:** Use `StatementFilter` subclasses for composable query filtering
@@ -137,8 +138,3 @@ class UserContainer(containers.DeclarativeContainer):
 - **Responses:** Wrap all API responses in `APIResponse[T]` with `ResponseCodes` and `JsonResponseStatuses`
 - **Constants:** Module-level literal constants (URLs, TTLs, timeouts, cookie names, key prefixes, bcrypt cost factors, etc.) MUST live in a per-module `constants.py` (e.g. `apps/auth/constants.py`, `apps/rbac/constants.py`) and be typed with `typing.Final[T]`. NEVER define constants inline in service / route / repository / model / DI-container files — even if only used within that module. Importers should `from apps.<module>.constants import NAME`. This keeps all tunables in one greppable place per module and makes test overrides trivial.
 - All rules in `.claude/rules/` apply to every coding task
-
-<!-- SPECKIT START -->
-For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan: [specs/003-post-likes-comments/plan.md](specs/003-post-likes-comments/plan.md)
-<!-- SPECKIT END -->

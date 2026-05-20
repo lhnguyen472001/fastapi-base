@@ -13,7 +13,7 @@ from apps.auth.exceptions import (
     OAuthStateExpiredError,
     OAuthStateInvalidError,
 )
-from apps.auth.oauth import GoogleOAuthClient
+from apps.auth.protocols import OAuthProviderProtocol
 from apps.auth.security import (
     TokenError,
     TokenExpiredError as CoreTokenExpiredError,
@@ -48,7 +48,7 @@ class OAuthService:
         self,
         *,
         user_service: UserService,
-        google_oauth_client: GoogleOAuthClient,
+        google_oauth_client: OAuthProviderProtocol,
     ) -> None:
         self.user_service = user_service
         self.google_oauth_client = google_oauth_client

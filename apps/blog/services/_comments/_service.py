@@ -1,4 +1,4 @@
-"""Post-comment service — auth + anonymous create, list (US2).
+"""Post-comment service — auth + anonymous create, list, edit, delete (US2 / US4).
 
 Implements US2 of specs/003-post-likes-comments. Authenticated callers
 submit comments that are born ``approved`` (visible immediately, counter
@@ -16,15 +16,12 @@ no untrusted markup can ever reach another reader's browser (SC-008).
 from __future__ import annotations
 
 import datetime
-import ipaddress
 import uuid
-from typing import TYPE_CHECKING
 
-import nh3
 from loguru import logger
 
 from apps.blog.constants import POST_COMMENT_EDIT_WINDOW_SECONDS
-from apps.blog.enums import CommentAuthorKind, CommentState, PostStatus
+from apps.blog.enums import CommentState, PostStatus
 from apps.blog.exceptions import (
     AnonymousAuthorImmutableError,
     AnonymousCommentsDisabledError,
@@ -35,6 +32,7 @@ from apps.blog.exceptions import (
     PostEngagementClosedError,
     PostNotFoundError,
 )
+from apps.blog.models import Post, PostComment
 from apps.blog.repositories import PostCommentRepository, PostRepository
 from apps.blog.schemas import (
     CreateAnonymousCommentRequest,
@@ -43,35 +41,21 @@ from apps.blog.schemas import (
     PostCommentResponse,
     UpdateCommentRequest,
 )
+from apps.blog.services._comments._helpers import (
+    _DELETED_USER_DISPLAY,
+    _author_from_row,
+    _parse_ip,
+    _row_to_response,
+    _sanitize_comment_body,
+)
 from apps.core.database.transactional import transactional
+from apps.core.database.types import SessionType
 from apps.core.schemas.response import PaginatedResponse
-
-if TYPE_CHECKING:
-    from apps.blog.models import Post, PostComment
-    from apps.core.database.types import SessionType
-    from apps.workspace.models import Workspace
-
-
-_DELETED_USER_DISPLAY = "[deleted]"
-
-
-def _sanitize_comment_body(raw: str) -> str:
-    """Strip every HTML tag/attribute from ``raw``; preserve text + line breaks.
-
-    Returns the canonical stored form. The Pydantic request schema has
-    already stripped surrounding whitespace; this function additionally
-    neutralizes any markup, so the stored body is plain text only.
-    """
-    return nh3.clean(
-        raw,
-        tags=set(),
-        attributes={},
-        strip_comments=True,
-    )
+from apps.workspace.models import Workspace
 
 
 class PostCommentService:
-    """Comment lifecycle service for auth + anonymous create + list."""
+    """Comment lifecycle service for auth + anonymous create + list + edit + delete."""
 
     def __init__(
         self,
@@ -197,13 +181,7 @@ class PostCommentService:
         limit: int,
         offset: int,
     ) -> PaginatedResponse[PostCommentResponse]:
-        """List approved top-level comments for a public post (FR-017).
-
-        Cross-workspace requests surface as ``PostNotFoundError``; the
-        list itself is a single SELECT plus one batched username fetch
-        plus one batched reply-count fetch — three round-trips total for
-        a page, regardless of page size.
-        """
+        """List approved top-level comments for a public post (FR-017)."""
         post = await self.post_repository.find_by_id(
             session,
             workspace_id=workspace_id,
@@ -220,25 +198,11 @@ class PostCommentService:
             limit=limit,
             offset=offset,
         )
-
-        author_ids = [r.author_user_id for r in rows if r.author_user_id is not None]
-        usernames = await self.repository.fetch_author_usernames(
+        items = await self._build_comment_response_items(
             session,
-            user_ids=author_ids,
+            rows=rows,
+            include_reply_counts=True,
         )
-        reply_counts = await self.repository.count_replies(
-            session,
-            parent_ids=[r.id for r in rows],
-        )
-
-        items = [
-            _row_to_response(
-                r,
-                author=_author_from_row(r, usernames),
-                reply_count=reply_counts.get(r.id, 0),
-            )
-            for r in rows
-        ]
         return PaginatedResponse[PostCommentResponse](
             items=items,
             total=total,
@@ -256,13 +220,7 @@ class PostCommentService:
         author_user_id: uuid.UUID,
         data: CreateAuthenticatedCommentRequest,
     ) -> PostCommentResponse:
-        """Submit a depth-1 authenticated reply to an approved comment.
-
-        Born ``approved``; INSERT trigger ticks ``posts.comment_count``
-        by +1. Cross-workspace isolation comes for free: the parent's
-        post must resolve under the caller-supplied workspace_id, else
-        the load surfaces as ``PostNotFoundError``.
-        """
+        """Submit a depth-1 authenticated reply to an approved comment."""
         post = await self._validate_parent_and_get_post(
             session,
             workspace_id=workspace_id,
@@ -309,13 +267,7 @@ class PostCommentService:
         data: CreateAnonymousCommentRequest,
         source_ip: str | None,
     ) -> PostCommentResponse:
-        """Submit a depth-1 anonymous reply.
-
-        Gated by ``workspace.allow_anonymous_comments`` (FR-010b); same
-        404-shape used by cross-workspace probes when the flag is OFF.
-        Born ``pending``; counter does NOT move until a moderator
-        approves the row.
-        """
+        """Submit a depth-1 anonymous reply."""
         if not workspace.allow_anonymous_comments:
             raise AnonymousCommentsDisabledError(message="Post not found.")
 
@@ -363,56 +315,23 @@ class PostCommentService:
         limit: int,
         offset: int,
     ) -> PaginatedResponse[PostCommentResponse]:
-        """List approved live replies for a comment, oldest-first.
-
-        Cross-workspace probes surface as ``CommentNotFoundError``: we
-        first probe the parent, then verify its post belongs to the
-        caller's workspace. Three round-trips per page (probe + list +
-        username fetch) regardless of page size.
-        """
-        parent_meta = await self.repository.find_parent_metadata(
-            session,
-            parent_id=parent_comment_id,
-        )
-        if parent_meta is None:
-            raise CommentNotFoundError(message="Comment not found.")
-        parent_post_id, parent_parent_id, parent_state, parent_deleted_at = parent_meta
-        if parent_parent_id is not None:
-            raise CommentNotFoundError(message="Comment not found.")
-        if parent_state != CommentState.APPROVED.value or parent_deleted_at is not None:
-            raise CommentNotFoundError(message="Comment not found.")
-
-        post = await self.post_repository.find_by_id(
+        """List approved live replies for a comment, oldest-first."""
+        await self._resolve_top_level_parent_post_id(
             session,
             workspace_id=workspace_id,
-            post_id=parent_post_id,
-            include_deleted=False,
-            load_content=False,
+            parent_comment_id=parent_comment_id,
         )
-        if post is None:
-            raise CommentNotFoundError(message="Comment not found.")
-
         rows, total = await self.repository.list_replies_approved(
             session,
             parent_id=parent_comment_id,
             limit=limit,
             offset=offset,
         )
-
-        author_ids = [r.author_user_id for r in rows if r.author_user_id is not None]
-        usernames = await self.repository.fetch_author_usernames(
+        items = await self._build_comment_response_items(
             session,
-            user_ids=author_ids,
+            rows=rows,
+            include_reply_counts=False,
         )
-
-        items = [
-            _row_to_response(
-                r,
-                author=_author_from_row(r, usernames),
-                reply_count=0,
-            )
-            for r in rows
-        ]
         return PaginatedResponse[PostCommentResponse](
             items=items,
             total=total,
@@ -429,36 +348,12 @@ class PostCommentService:
         current_user_id: uuid.UUID,
         data: UpdateCommentRequest,
     ) -> PostCommentResponse:
-        """Author-only body edit within the configured window (FR-019).
-
-        Reject cases:
-
-        * unknown / soft-deleted row → ``CommentNotFoundError`` (404)
-        * anonymous-authored row → ``AnonymousAuthorImmutableError`` (403)
-        * non-author caller → ``CommentAuthorForbiddenError`` (403)
-        * created_at older than ``POST_COMMENT_EDIT_WINDOW_SECONDS`` →
-          ``CommentEditWindowExpiredError`` (403)
-
-        The trigger does NOT fire on body-only updates; counters stay
-        exact.
-        """
-        row = await self.repository.find_by_id(session, comment_id=comment_id)
-        if row is None or row.deleted_at is not None:
-            raise CommentNotFoundError(message="Comment not found.")
-        if row.author_user_id is None:
-            raise AnonymousAuthorImmutableError(message="Anonymous comments cannot be edited.")
-        if row.author_user_id != current_user_id:
-            logger.warning(
-                "PostCommentService - edit_own - rejected non-author - comment_id={cid} caller={uid}",
-                cid=comment_id,
-                uid=current_user_id,
-            )
-            raise CommentAuthorForbiddenError(message="Only the comment author can edit this comment.")
-
-        now = datetime.datetime.now(tz=datetime.UTC)
-        if (now - row.created_at).total_seconds() > POST_COMMENT_EDIT_WINDOW_SECONDS:
-            raise CommentEditWindowExpiredError(message="Edit window has expired.")
-
+        """Author-only body edit within the configured window (FR-019)."""
+        _, now = await self._load_editable_row_or_raise(
+            session,
+            comment_id=comment_id,
+            current_user_id=current_user_id,
+        )
         sanitized = _sanitize_comment_body(data.body)
         updated = await self.repository.update_body(
             session,
@@ -490,15 +385,7 @@ class PostCommentService:
         comment_id: uuid.UUID,
         current_user_id: uuid.UUID,
     ) -> None:
-        """Author-only delete (FR-020).
-
-        Top-level rows with at least one approved live reply are
-        tombstoned (the reply thread must remain readable); everything
-        else (replies, and top-level rows without approved replies) is
-        hard-deleted. Anonymous rows are immutable.
-
-        The PG trigger handles the counter delta in both branches.
-        """
+        """Author-only delete (FR-020)."""
         row = await self.repository.find_by_id(session, comment_id=comment_id)
         if row is None or row.deleted_at is not None:
             raise CommentNotFoundError(message="Comment not found.")
@@ -562,17 +449,7 @@ class PostCommentService:
         workspace_id: uuid.UUID,
         parent_comment_id: uuid.UUID,
     ) -> Post:
-        """Probe parent + load + open-check the parent's post.
-
-        Centralises the reply-target validation used by both the
-        authenticated and anonymous reply paths:
-
-        * unknown parent → ``CommentNotFoundError``
-        * parent has its own parent (depth 2) → ``CommentNestingTooDeepError``
-        * parent not approved or soft-deleted → ``CommentNotFoundError``
-        * parent's post not in the caller's workspace → 404 mask via
-          ``PostNotFoundError`` from ``_load_open_post``
-        """
+        """Probe parent + load + open-check the parent's post."""
         parent_meta = await self.repository.find_parent_metadata(
             session,
             parent_id=parent_comment_id,
@@ -590,55 +467,85 @@ class PostCommentService:
             post_id=parent_post_id,
         )
 
-
-# ---------------------------------------------------------------------------
-# Response builders
-# ---------------------------------------------------------------------------
-
-
-def _author_from_row(row: PostComment, usernames: dict[uuid.UUID, str]) -> PostCommentAuthor:
-    """Compose the PostCommentAuthor from an ORM row + the username lookup."""
-    if row.author_user_id is not None:
-        return PostCommentAuthor(
-            display_name=usernames.get(row.author_user_id, _DELETED_USER_DISPLAY),
-            user_id=row.author_user_id,
-            username=usernames.get(row.author_user_id),
+    async def _resolve_top_level_parent_post_id(
+        self,
+        session: SessionType,
+        *,
+        workspace_id: uuid.UUID,
+        parent_comment_id: uuid.UUID,
+    ) -> uuid.UUID:
+        """Read-only parent probe used by :meth:`list_replies`."""
+        parent_meta = await self.repository.find_parent_metadata(
+            session,
+            parent_id=parent_comment_id,
         )
-    return PostCommentAuthor(
-        display_name=row.author_display_name or _DELETED_USER_DISPLAY,
-        user_id=None,
-        username=None,
-    )
+        if parent_meta is None:
+            raise CommentNotFoundError(message="Comment not found.")
+        parent_post_id, parent_parent_id, parent_state, parent_deleted_at = parent_meta
+        if parent_parent_id is not None:
+            raise CommentNotFoundError(message="Comment not found.")
+        if parent_state != CommentState.APPROVED.value or parent_deleted_at is not None:
+            raise CommentNotFoundError(message="Comment not found.")
+        post = await self.post_repository.find_by_id(
+            session,
+            workspace_id=workspace_id,
+            post_id=parent_post_id,
+            include_deleted=False,
+            load_content=False,
+        )
+        if post is None:
+            raise CommentNotFoundError(message="Comment not found.")
+        return parent_post_id
 
+    async def _build_comment_response_items(
+        self,
+        session: SessionType,
+        *,
+        rows: list[PostComment],
+        include_reply_counts: bool,
+    ) -> list[PostCommentResponse]:
+        """Batch-fetch authors (+ optional reply counts) and project rows."""
+        author_ids = [r.author_user_id for r in rows if r.author_user_id is not None]
+        usernames = await self.repository.fetch_author_usernames(
+            session,
+            user_ids=author_ids,
+        )
+        reply_counts: dict[uuid.UUID, int] = {}
+        if include_reply_counts and rows:
+            reply_counts = await self.repository.count_replies(
+                session,
+                parent_ids=[r.id for r in rows],
+            )
+        return [
+            _row_to_response(
+                r,
+                author=_author_from_row(r, usernames),
+                reply_count=reply_counts.get(r.id, 0),
+            )
+            for r in rows
+        ]
 
-def _row_to_response(
-    row: PostComment,
-    *,
-    author: PostCommentAuthor,
-    reply_count: int,
-) -> PostCommentResponse:
-    """Project a PostComment row into the public response shape."""
-    kind = CommentAuthorKind.AUTHENTICATED if row.author_user_id is not None else CommentAuthorKind.ANONYMOUS
-    body = None if row.is_tombstoned else row.body
-    return PostCommentResponse(
-        id=row.id,
-        post_id=row.post_id,
-        parent_comment_id=row.parent_comment_id,
-        author_kind=kind.value,
-        author=author,
-        body=body,
-        edited_at=row.edited_at,
-        created_at=row.created_at,
-        is_tombstoned=row.is_tombstoned,
-        reply_count=reply_count,
-    )
-
-
-def _parse_ip(value: str | None) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
-    """Best-effort parse of the source IP for anonymous-comment storage."""
-    if value is None:
-        return None
-    try:
-        return ipaddress.ip_address(value)
-    except ValueError:
-        return None
+    async def _load_editable_row_or_raise(
+        self,
+        session: SessionType,
+        *,
+        comment_id: uuid.UUID,
+        current_user_id: uuid.UUID,
+    ) -> tuple[PostComment, datetime.datetime]:
+        """Probe + validate the row for an author-only mutation."""
+        row = await self.repository.find_by_id(session, comment_id=comment_id)
+        if row is None or row.deleted_at is not None:
+            raise CommentNotFoundError(message="Comment not found.")
+        if row.author_user_id is None:
+            raise AnonymousAuthorImmutableError(message="Anonymous comments cannot be edited.")
+        if row.author_user_id != current_user_id:
+            logger.warning(
+                "PostCommentService - edit_own - rejected non-author - comment_id={cid} caller={uid}",
+                cid=comment_id,
+                uid=current_user_id,
+            )
+            raise CommentAuthorForbiddenError(message="Only the comment author can edit this comment.")
+        now = datetime.datetime.now(tz=datetime.UTC)
+        if (now - row.created_at).total_seconds() > POST_COMMENT_EDIT_WINDOW_SECONDS:
+            raise CommentEditWindowExpiredError(message="Edit window has expired.")
+        return row, now

@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable, Sequence
-from typing import Any, Generic, cast
+from typing import Any, cast
 
-from sqlalchemy.orm import InstrumentedAttribute
+from sqlalchemy.orm import DeclarativeBase, InstrumentedAttribute
 from sqlalchemy.sql import ColumnElement, update
 from sqlalchemy.sql.selectable import ForUpdateParameter
 
@@ -23,11 +23,10 @@ from apps.core.database.repository import _mutations
 from apps.core.database.types import (
     ExecutableOptions,
     SessionType,
-    SQLAlchemyModelT,
 )
 
 
-class _WriteRepositoryMixin(Generic[SQLAlchemyModelT]):
+class _WriteRepositoryMixin[SQLAlchemyModelT: DeclarativeBase]:
     """Write methods extracted from BaseSQLAlchemyRepository."""
 
     async def add(

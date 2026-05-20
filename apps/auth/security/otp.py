@@ -10,6 +10,13 @@ Two distinct one-time-code concerns share this module:
   permanent 2FA bypass. ``verify_totp_with_replay_guard`` walks the
   current 30-second time window and rejects already-consumed counters
   to prevent shoulder-surf replay within the same window.
+
+Operational tooling:
+
+* :func:`rotate_secret_storage` re-encrypts every ``users.totp_secret``
+  from an old Fernet key to a new one. Used during scheduled key
+  rotation per the dual-key procedure in
+  ``docs/runbooks/auth-totp-rotation.md``. Idempotent.
 """
 
 from __future__ import annotations
@@ -20,11 +27,15 @@ import hashlib
 import hmac
 import secrets
 import time
+from dataclasses import dataclass
 
 import pyotp
-from cryptography.fernet import Fernet
+import sqlalchemy as sa
+from cryptography.fernet import Fernet, InvalidToken
 from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps.auth.constants import TOTP_ROTATION_BATCH_SIZE
 from apps.settings import app_settings
 
 # Deterministic dev-mode Fernet key. NEVER trips in production because
@@ -81,6 +92,151 @@ def decrypt_totp_secret(ciphertext: str) -> str:
             tampered, or was minted with a different key.
     """
     return _load_totp_fernet().decrypt(ciphertext.encode("ascii")).decode("ascii")
+
+
+@dataclass(slots=True, kw_only=True, frozen=True)
+class TotpRotationSummary:
+    """Outcome of a :func:`rotate_secret_storage` run.
+
+    Returned to the operator so the runbook's verification step can
+    confirm the expected number of rows moved and that no row was
+    silently dropped.
+    """
+
+    total_inspected: int
+    re_encrypted: int
+    already_new_key: int
+    undecryptable: int
+
+
+async def rotate_secret_storage(
+    session: AsyncSession,
+    *,
+    old_key: str,
+    new_key: str,
+    batch_size: int = TOTP_ROTATION_BATCH_SIZE,
+) -> TotpRotationSummary:
+    """Re-encrypt every ``users.totp_secret`` from ``old_key`` to ``new_key``.
+
+    Offline rotation helper. The caller owns the session and the
+    surrounding transaction; this function performs raw SQL reads in
+    batches of ``batch_size`` (id-ordered cursor pagination so a
+    concurrent INSERT during rotation doesn't shift rows already
+    processed) and per-row UPDATEs.
+
+    Idempotency:
+
+    * Rows that already decrypt cleanly with ``new_key`` are left
+      untouched (counted under ``already_new_key``). Re-running the
+      rotation after a partial outage therefore picks up only the
+      rows that still need to move.
+    * Rows that decrypt with neither key are logged as
+      ``undecryptable`` (corrupted ciphertext, wrong key pair, or a
+      stray plaintext from before the encryption migration) and
+      skipped. Operators must hand-fix these out of band — silently
+      re-encrypting unknown content would mask data loss.
+
+    NOT a steady-state runtime API: the live app must keep using
+    :func:`_load_totp_fernet`. This helper is intended for one-off
+    maintenance windows; see ``docs/runbooks/auth-totp-rotation.md``
+    for the full procedure.
+
+    Args:
+        session: An open ``AsyncSession`` bound to the writer engine.
+            The caller is responsible for transaction management.
+        old_key: URL-safe base64 Fernet key currently used at rest.
+        new_key: URL-safe base64 Fernet key to rotate to. Generate one
+            via ``cryptography.fernet.Fernet.generate_key()`` or
+            ``scripts/generate_totp_key.py``.
+        batch_size: Per-batch row count. Default
+            :data:`TOTP_ROTATION_BATCH_SIZE`.
+
+    Returns:
+        :class:`TotpRotationSummary` with row counts the runbook
+        verification step compares against expectations.
+
+    Raises:
+        ValueError: When either key is empty or malformed (Fernet
+            constructor rejects it).
+    """
+    old_fernet = Fernet(old_key.encode("ascii"))
+    new_fernet = Fernet(new_key.encode("ascii"))
+
+    total = 0
+    re_encrypted = 0
+    already_new = 0
+    undecryptable = 0
+    cursor: str | None = None
+
+    while True:
+        if cursor is None:
+            stmt = sa.text(
+                "SELECT id, totp_secret FROM users "
+                "WHERE totp_secret IS NOT NULL "
+                "ORDER BY id ASC "
+                "LIMIT :batch_size"
+            )
+            rows = (await session.execute(stmt, {"batch_size": batch_size})).fetchall()
+        else:
+            stmt = sa.text(
+                "SELECT id, totp_secret FROM users "
+                "WHERE totp_secret IS NOT NULL AND id > :cursor "
+                "ORDER BY id ASC "
+                "LIMIT :batch_size"
+            )
+            rows = (
+                await session.execute(stmt, {"cursor": cursor, "batch_size": batch_size})
+            ).fetchall()
+
+        if not rows:
+            break
+
+        for row_id, ciphertext in rows:
+            total += 1
+            ct_bytes = ciphertext.encode("ascii")
+            try:
+                new_fernet.decrypt(ct_bytes)
+                already_new += 1
+                continue
+            except InvalidToken:
+                pass
+
+            try:
+                plaintext_bytes = old_fernet.decrypt(ct_bytes)
+            except InvalidToken:
+                undecryptable += 1
+                logger.warning(
+                    "rotate_secret_storage - row id={id} not decryptable with either key; "
+                    "skipping (operator must hand-fix)",
+                    id=row_id,
+                )
+                continue
+
+            new_ciphertext = new_fernet.encrypt(plaintext_bytes).decode("ascii")
+            await session.execute(
+                sa.text("UPDATE users SET totp_secret = :ct WHERE id = :id"),
+                {"ct": new_ciphertext, "id": row_id},
+            )
+            re_encrypted += 1
+
+        cursor = rows[-1][0]
+        if len(rows) < batch_size:
+            break
+
+    logger.info(
+        "rotate_secret_storage - finished: total={total} re_encrypted={re} "
+        "already_new={new} undecryptable={bad}",
+        total=total,
+        re=re_encrypted,
+        new=already_new,
+        bad=undecryptable,
+    )
+    return TotpRotationSummary(
+        total_inspected=total,
+        re_encrypted=re_encrypted,
+        already_new_key=already_new,
+        undecryptable=undecryptable,
+    )
 
 
 def verify_totp_with_replay_guard(

@@ -8,23 +8,20 @@ from __future__ import annotations
 
 import datetime
 import uuid
-from typing import TYPE_CHECKING
 
 from apps.blog.exceptions import CategoryNotFoundError, CategorySlugConflictError
 from apps.blog.models import Category
+from apps.blog.repositories import CategoryRepository
+from apps.blog.schemas import (
+    CreateCategoryRequest,
+    ListCategoriesRequest,
+    UpdateCategoryRequest,
+)
 from apps.blog.utils import normalize_slug
 from apps.core.database.transactional import transactional
+from apps.core.database.types import SessionType
 from apps.core.database.utils import slugify
 from apps.core.services.base import BaseSQLAlchemyService
-
-if TYPE_CHECKING:
-    from apps.blog.repositories import CategoryRepository
-    from apps.blog.schemas import (
-        CreateCategoryRequest,
-        ListCategoriesRequest,
-        UpdateCategoryRequest,
-    )
-    from apps.core.database.types import SessionType
 
 
 class CategoryService(BaseSQLAlchemyService[Category]):

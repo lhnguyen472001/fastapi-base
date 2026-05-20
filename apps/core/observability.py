@@ -36,6 +36,7 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
+from apps.core.database.engine import register_db_pool_gauges
 from apps.core.logging import enable_otel_log_export
 from apps.settings import app_settings
 
@@ -108,6 +109,11 @@ def configure_observability(
             continue
         _instrument_sqlalchemy(engine)
         seen_urls.add(url)
+
+    # MED-1 pool diagnostics: observable gauges per engine_type so dashboards
+    # can split db_pool_checkedout / db_pool_size / db_pool_overflow by role.
+    if writer_engine is not None:
+        register_db_pool_gauges(writer_engine, reader_engine)
 
     if app_settings.redis.enabled:
         _instrument_redis()

@@ -53,6 +53,18 @@ POST_CACHE_KEY_PREFIX: Final[str] = "blog:post:v1"
 POST_CACHE_DETAIL_TTL: Final[int] = 300
 POST_CACHE_LIST_TTL: Final[int] = 60
 
+# Render cache (Tiptap render+sanitize is ~5-10 ms per call on typical
+# bodies). Key shape is ``blog:render:v1:<post_id>:<content_hash>`` so
+# every distinct ``content_hash`` produces its own entry — a keystroke
+# in the autosave editor naturally rolls the key without explicit
+# invalidation. On persisted post update we still call
+# :func:`invalidate_render_cache_for_post` so the next fetch is forced
+# to re-render from the new authoritative state immediately (rather
+# than serving a stale render until TTL expiry). v1 namespace so the
+# key shape can be revved cleanly if the renderer output changes.
+POST_RENDER_CACHE_KEY_PREFIX: Final[str] = "blog:render:v1"
+POST_RENDER_CACHE_TTL_SECONDS: Final[int] = 300
+
 # ---------------------------------------------------------------------------
 # Autosave (Redis-first write-behind for the Tiptap body)
 # ---------------------------------------------------------------------------

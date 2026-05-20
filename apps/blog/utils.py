@@ -31,6 +31,8 @@ from apps.blog.constants import (
     BLOG_SLUG_PATTERN,
     LARGE_CONTENT_BYTES,
     MIN_PUBLISH_BODY_CHARS,
+    POST_RENDER_CACHE_KEY_PREFIX,
+    POST_RENDER_CACHE_TTL_SECONDS,
     POST_VERSION_COMPRESSION_LEVEL,
     WORDS_PER_MINUTE,
 )
@@ -42,6 +44,7 @@ from apps.blog.exceptions import (
 from apps.blog.models import Post
 from apps.blog.schemas import CompareVersionsHunk, CompareVersionsResult
 from apps.core.database.utils import slugify
+from apps.core.redis.cache import CacheManager
 from apps.core.tiptap import extract_text, render_html, sanitize_html
 
 
@@ -156,6 +159,71 @@ async def sanitize_html_async(
     if _should_offload(len(html.encode("utf-8")), threshold_bytes=threshold_bytes):
         return await asyncio.to_thread(sanitize_html, html)
     return sanitize_html(html)
+
+
+def _render_cache_key(post_id: uuid.UUID, content_hash: str) -> str:
+    """Cache-key shape for a single (post, content_hash) rendered HTML entry."""
+    return f"{POST_RENDER_CACHE_KEY_PREFIX}:{post_id}:{content_hash}"
+
+
+async def render_html_cached(
+    cache: CacheManager,
+    *,
+    post_id: uuid.UUID,
+    content_json: dict[str, Any],
+    content_hash: str,
+) -> str:
+    """Render + sanitize Tiptap content with a hash-keyed Redis cache.
+
+    Cache key: ``blog:render:v1:<post_id>:<content_hash>``. Every
+    distinct ``content_hash`` produces its own entry, so a keystroke
+    on a draft naturally rolls to a fresh key without explicit
+    invalidation. Entries age out after
+    :data:`POST_RENDER_CACHE_TTL_SECONDS` of inactivity.
+
+    On a cache miss the function falls through to the standard
+    ``sanitize_html(render_html(content_json))`` pipeline (offloaded to
+    a worker thread above :data:`LARGE_CONTENT_BYTES`) and stores the
+    result. With Redis disabled (``cache.redis is None``) every call
+    is a miss-and-render — same cost as the un-cached path.
+
+    Args:
+        cache: The shared :class:`CacheManager` (typically
+            ``self.cache`` on a service).
+        post_id: The post owning this rendered HTML; included in the
+            key so :func:`invalidate_render_cache_for_post` can drop
+            every cached render for a single post on persisted update.
+        content_json: The ProseMirror document to render.
+        content_hash: SHA-256 hex digest of the canonical-JSON
+            serialization of ``content_json`` — already computed by
+            :func:`compute_content_artifacts`.
+
+    Returns:
+        Sanitized HTML string, byte-identical to what the un-cached
+        pipeline produces.
+    """
+    key = _render_cache_key(post_id, content_hash)
+    cached = await cache.get(key)
+    if cached is not None:
+        return cached
+    html = await sanitize_html_async(render_html(content_json))
+    await cache.set(key, html, ttl=POST_RENDER_CACHE_TTL_SECONDS)
+    return html
+
+
+async def invalidate_render_cache_for_post(
+    cache: CacheManager,
+    *,
+    post_id: uuid.UUID,
+) -> int:
+    """Drop every cached render for ``post_id``.
+
+    Called from :meth:`PostService.update` so a persisted edit forces
+    the next fetch to re-render from the new authoritative content.
+    Returns the number of keys actually deleted (0 when Redis is off
+    or no cached renders existed).
+    """
+    return await cache.invalidate_pattern(f"{POST_RENDER_CACHE_KEY_PREFIX}:{post_id}:*")
 
 
 def decompress_content_json(blob: bytes) -> dict[str, Any]:

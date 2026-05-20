@@ -3,20 +3,20 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any, Generic, cast
+from typing import Any, cast
 
+from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.sql import ColumnElement, Select
 
 from apps.core.database.filters import StatementFilter
 from apps.core.database.types import (
     OrderingPair,
-    SQLAlchemyModelT,
     StatementTypeT,
 )
 from apps.core.database.utils import get_instrumented_attr
 
 
-class QueryBuilder(Generic[SQLAlchemyModelT]):
+class QueryBuilder[SQLAlchemyModelT: DeclarativeBase]:
     """Apply filters, ordering, and keyword predicates to a SQL statement.
 
     The builder is bound to a single model type at construction so callers

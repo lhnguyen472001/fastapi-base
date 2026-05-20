@@ -72,19 +72,38 @@ class UserGroupRepository(BaseSQLAlchemyRepository[UserGroup]):
         )
         return list(result.scalars().all())
 
-    async def list_active_user_ids(self, session: AsyncSession, *, group_id: int) -> list[uuid.UUID]:
+    async def list_active_user_ids(
+        self,
+        session: AsyncSession,
+        *,
+        group_id: int,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[uuid.UUID]:
         """Return ``user_id`` values for every active member of a group.
 
         Projects the column directly so callers (e.g.
         :meth:`GroupService.assign_role_to_group`) avoid hydrating full
         ``UserGroup`` rows when only the user IDs are needed.
+
+        Pagination is opt-in: pass ``limit`` (and optionally ``offset``)
+        to bound the result set. Service-layer fan-out flows MUST paginate
+        — an unbounded ``.all()`` against a 100k-member group would pin a
+        large list in worker memory and risk OOM. The default (``limit
+        is None``) preserves the historical fetch-all behaviour for
+        callers that explicitly cannot tolerate paging.
         """
-        result = await session.execute(
-            select(UserGroup.user_id).where(
+        stmt = (
+            select(UserGroup.user_id)
+            .where(
                 UserGroup.group_id == group_id,
                 UserGroup.is_active.is_(True),
             )
+            .order_by(UserGroup.user_id.asc())
         )
+        if limit is not None:
+            stmt = stmt.limit(limit).offset(offset)
+        result = await session.execute(stmt)
         return list(result.scalars().all())
 
 

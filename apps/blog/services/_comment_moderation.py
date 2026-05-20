@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import datetime
 import uuid
-from typing import TYPE_CHECKING
 
 from loguru import logger
 
@@ -30,6 +29,7 @@ from apps.blog.exceptions import (
     CommentNotPendingError,
     PostNotFoundError,
 )
+from apps.blog.models import Post, PostComment
 from apps.blog.repositories import (
     PostCommentModerationRepository,
     PostRepository,
@@ -40,13 +40,9 @@ from apps.blog.schemas import (
     ReconcileEngagementCountersResponse,
 )
 from apps.core.database.transactional import transactional
+from apps.core.database.types import SessionType
 from apps.rbac.exceptions import AccessDeniedError
-
-if TYPE_CHECKING:
-    from apps.blog.models import Post, PostComment
-    from apps.core.database.types import SessionType
-    from apps.rbac.services import AccessService
-
+from apps.rbac.services import AccessService
 
 _MODERATE_RESOURCE = "blog"
 _MODERATE_ACTION = "moderate_comments"
@@ -276,15 +272,10 @@ class PostCommentModerationService:
 
         Moderation endpoints are RBAC-gated rather than workspace-scoped,
         so the caller knows the comment's ``post_id`` but not necessarily
-        its workspace. A direct lookup by id is safe because the route
-        layer already enforced ``blog:moderate_comments``.
+        its workspace. The lookup itself lives on the repository to keep
+        services free of raw SQL.
         """
-        from sqlalchemy import select  # noqa: PLC0415
-
-        from apps.blog.models import Post  # noqa: PLC0415
-
-        stmt = select(Post).where(Post.id == post_id)
-        return (await session.execute(stmt)).scalar_one_or_none()
+        return await self.post_repository.find_by_id_any_workspace(session, post_id=post_id)
 
 
 def _now() -> datetime.datetime:

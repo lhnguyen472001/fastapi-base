@@ -14,21 +14,17 @@ fully checkable without importing the runtime stubs.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from collections.abc import Mapping
+from typing import Any
 
 import aioboto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 from loguru import logger
+from types_aiobotocore_s3.client import S3Client as AioS3Client
 
 from apps.core.storage.exceptions import StorageError, StorageObjectNotFoundError
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
-
-    from types_aiobotocore_s3.client import S3Client as AioS3Client
-
-    from apps.settings import StorageSettings
+from apps.settings import StorageSettings
 
 # botocore "404"-equivalent codes returned by HEAD on a missing object.
 _NOT_FOUND_CODES: frozenset[str] = frozenset({"404", "NoSuchKey", "NotFound"})
